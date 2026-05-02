@@ -1,0 +1,56 @@
+name: Amazon VPC Lattice Blueprints
+service: Amazon VPC Lattice
+summary: >
+  A collection of Amazon VPC Lattice patterns implemented using several IaC solutions, 
+  demonstrating how to configure and deploy service-to-service communication within AWS
+  in a simplified way. 
+
+patterns:
+  - name: Simple Architectures
+    description: >
+      Fundamental single-account VPC Lattice architectures — the entry
+      point for understanding service networks, services, target groups,
+      and VPC associations.
+    iac: [CloudFormation, Terraform]
+    sub_patterns:
+      - name: EC2 Instance
+        description: >
+          EC2 instances as targets using INSTANCE and IP target types.
+      - name: Auto Scaling Group
+        description: >
+          Auto Scaling group as target, with automatic instance
+          registration on scale-out events.
+      - name: Lambda Function
+        description: >
+          AWS Lambda function as a serverless target.
+      - name: ECS
+        description: >
+          Amazon ECS tasks as containerized targets.
+
+  - name: Multi-AWS Account
+    description: >
+      Cross-account VPC Lattice deployment using AWS Resource Access
+      Manager (RAM) to share service networks and services.
+    iac: [CloudFormation, Terraform]
+    sub_patterns:
+      - name: Centralized Service Network
+        description: >
+          Service network owned and shared by a central networking
+          account; participating accounts associate their VPCs and
+          publish services into it.
+      - name: Distributed
+        description: >
+          Each account owns and shares its own service network;
+          consumers associate with multiple networks as needed.
+
+  - name: Advanced Architectures
+    description: >
+      Complex architectures including hybrid connectivity, cross-region
+      patterns, and advanced connectivity scenarios beyond the
+      single-account fundamentals.
+    iac: [CloudFormation, Terraform]
+    sub_patterns:
+      - name: Centralized VPC Endpoints
+        description: >
+          Sharing VPC endpoints across accounts via VPC Lattice, avoiding
+          per-account interface endpoint duplication.
