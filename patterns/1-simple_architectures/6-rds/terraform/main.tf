@@ -6,7 +6,7 @@
 # ---------- VPC RESOURCE ----------
 # Resource gateway
 resource "aws_vpclattice_resource_gateway" "resource_gateway" {
-  name               = "${var.identifier}-rgw"
+  name               = "resource-gateway-${var.identifier}"
   vpc_id             = module.provider_vpc.vpc_attributes.id
   subnet_ids         = values({ for k, v in module.provider_vpc.private_subnet_attributes_by_az : split("/", k)[1] => v.id if split("/", k)[0] == "resourcegateway" })
   ip_address_type    = "DUALSTACK"
@@ -15,7 +15,7 @@ resource "aws_vpclattice_resource_gateway" "resource_gateway" {
 
 # Resource configuration
 resource "aws_vpclattice_resource_configuration" "resource_configuration" {
-  name = "${var.identifier}-rcg"
+  name = "resource-configuration-${var.identifier}"
   type = "ARN"
 
   resource_gateway_identifier = aws_vpclattice_resource_gateway.resource_gateway.id
@@ -81,14 +81,14 @@ module "consumer_instances" {
   source = "../../../tf_modules/consumer_instance"
 
   identifier      = var.identifier
-  vpc_name        = "consumer_vpc"
+  vpc_name        = "consumer-vpc"
   vpc             = module.consumer_vpc
   vpc_information = var.vpc
 }
 
 # Security Group (VPC Lattice VPC association)
 resource "aws_security_group" "vpclattice_sg" {
-  name        = "consumer_vpc-vpclattice-security-group-${var.identifier}"
+  name        = "consumer-vpc-vpclattice-security-group-${var.identifier}"
   description = "VPC Lattice Security Group"
   vpc_id      = module.consumer_vpc.vpc_attributes.id
 }
@@ -167,7 +167,7 @@ resource "aws_rds_cluster_instance" "aurora_instance" {
 
 # Security Group: Resource Configuration
 resource "aws_security_group" "provider_rgw_sg" {
-  name        = "provider-rgw-security-group-${var.identifier}"
+  name        = "provider-vpc-resource-gateway-security-group-${var.identifier}"
   description = "Resource Gateway Security Group"
   vpc_id      = module.provider_vpc.vpc_attributes.id
 }
@@ -192,7 +192,7 @@ resource "aws_vpc_security_group_egress_rule" "provider_allowing_egress_db_ipv6"
 
 # Security Group: RDS
 resource "aws_security_group" "aurora_sg" {
-  name        = "aurora-security-group-${var.identifier}"
+  name        = "provider-vpc-aurora-security-group-${var.identifier}"
   description = "Security group for RDS instance"
   vpc_id      = module.provider_vpc.vpc_attributes.id
 }

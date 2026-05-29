@@ -74,14 +74,14 @@ module "consumer_instances" {
   source = "../../../../tf_modules/consumer_instance"
 
   identifier      = var.identifier
-  vpc_name        = "consumer_vpc"
+  vpc_name        = "consumer-vpc"
   vpc             = module.consumer_vpc
   vpc_information = var.vpc
 }
 
 # ---------- SECURITY GROUP (VPC LATTICE ASSOCIATION) ----------
 resource "aws_security_group" "vpclattice_sg" {
-  name        = "consumer_vpc-vpclattice-security-group-${var.identifier}"
+  name        = "consumer-vpc-vpclattice-security-group-${var.identifier}"
   description = "VPC Lattice Security Group"
   vpc_id      = module.consumer_vpc.vpc_attributes.id
 }
