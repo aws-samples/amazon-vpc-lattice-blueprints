@@ -10,7 +10,7 @@ data "aws_organizations_organization" "org" {}
 # VPC Lattice Module
 module "vpc_lattice_service" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   services = {
     lambdaservice = {

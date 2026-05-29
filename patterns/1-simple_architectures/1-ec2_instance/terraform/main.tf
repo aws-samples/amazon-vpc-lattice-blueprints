@@ -19,7 +19,7 @@ data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv6" {
 # VPC Lattice service network
 module "service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     name      = "service-network-${var.identifier}"
@@ -30,7 +30,7 @@ module "service_network" {
 # VPC Lattice service1 - VPC Lattice-generated FQDN, HTTPS listener, EC2 instance targets
 module "service1" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     identifier = module.service_network.service_network.id
@@ -84,7 +84,7 @@ module "service1" {
 # VPC Lattice service2 - Custom domain name, HTTPS listener, IPv4 & IPv6 targets
 module "service2" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     identifier = module.service_network.service_network.id
@@ -167,7 +167,7 @@ module "service2" {
 # ---------- CONSUMER VPC AND EC2 INSTANCES ----------
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "consumer-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
@@ -228,7 +228,7 @@ resource "aws_route53_zone" "private_hosted_zone" {
 # ---------- PROVIDER VPC AND EC2 INSTANCES ----------
 module "provider_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "provider-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block

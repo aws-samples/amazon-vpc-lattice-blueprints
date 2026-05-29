@@ -16,7 +16,7 @@ data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv6" {
 # VPC Lattice service network
 module "service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     name      = "service-network-${var.identifier}"
@@ -27,7 +27,7 @@ module "service_network" {
 # VPC Lattice service - VPC Lattice-generated FQDN, HTTPS listener, Instance type target
 module "service" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     identifier = module.service_network.service_network.id
@@ -65,7 +65,7 @@ module "service" {
 # ---------- CONSUMER VPC AND EC2 INSTANCES ----------
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "consumer-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
@@ -122,7 +122,7 @@ resource "aws_lambda_function" "lambda" {
   source_code_hash = data.archive_file.python_lambda_package.output_base64sha256
 
   role    = aws_iam_role.lambda_role.arn
-  runtime = "python3.13"
+  runtime = "python3.14"
   handler = "lambda_function.lambda_handler"
 }
 

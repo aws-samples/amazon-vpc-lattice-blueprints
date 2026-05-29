@@ -16,7 +16,7 @@ data "aws_ram_resource_share" "vpclattice_service" {
 # VPC Lattice Module
 module "vpclattice_service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     name        = "service-network-${var.identifier}"

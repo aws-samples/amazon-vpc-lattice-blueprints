@@ -12,7 +12,7 @@ data "aws_ram_resource_share" "vpclattice_service" {
 # ---------- CONSUMER VPC ----------
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "consumer-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block

@@ -390,7 +390,7 @@ Resources:
   PrefixListLookupFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.13
+      Runtime: python3.14
       Handler: index.handler
       Role: !GetAtt PrefixListLookupRole.Arn
       Code:
@@ -466,7 +466,7 @@ Resources:
   EC2IPv6AddressFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.13
+      Runtime: python3.14
       Handler: index.handler
       Role: !GetAtt EC2IPv6AddressRole.Arn
       Timeout: 30

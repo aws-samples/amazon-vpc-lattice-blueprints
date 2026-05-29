@@ -16,7 +16,7 @@ data "aws_ram_resource_share" "vpclattice_service" {
 # VPC Lattice Module
 module "vpclattice_service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     name        = "service-network-${var.identifier}"
@@ -45,7 +45,7 @@ locals {
 # ---------- CONSUMER VPC ----------
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "consumer-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
