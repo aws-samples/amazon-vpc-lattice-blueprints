@@ -6,6 +6,14 @@ documentation, we greatly value feedback and contributions from our community.
 Please read through this document before submitting any issues or pull requests to ensure we have all the necessary
 information to effectively respond to your bug report or contribution.
 
+## Repository conventions
+
+Every published pattern follows a single set of conventions covering naming, directory
+layout, dependency version pins, license headers, the access-logging standard, DNS
+facts, and CloudFormation/Terraform parity. Before adding or modifying a pattern, read
+[CONVENTIONS.md](CONVENTIONS.md) — it is the contract new patterns must follow. Pull
+requests are expected to conform to it.
+
 ## Reporting Bugs/Feature Requests
 
 We welcome you to use the GitHub issue tracker to report bugs or suggest features.
