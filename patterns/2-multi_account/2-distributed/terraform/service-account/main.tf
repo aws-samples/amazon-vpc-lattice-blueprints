@@ -50,6 +50,19 @@ module "vpc_lattice_service" {
   }
 }
 
+# ---------- VPC LATTICE ACCESS LOGGING ----------
+# CloudWatch Logs log group (access logs destination)
+resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
+  name              = "/aws/vpclattice/${var.identifier}"
+  retention_in_days = 7
+}
+
+# Access log subscription (service scope - this account owns the VPC Lattice service)
+resource "aws_vpclattice_access_log_subscription" "service_access_logs" {
+  resource_identifier = module.vpc_lattice_service.services["lambdaservice"].attributes.arn
+  destination_arn     = aws_cloudwatch_log_group.vpclattice_access_logs.arn
+}
+
 # VPC Lattice service Auth Policy
 locals {
   auth_policy = jsonencode({

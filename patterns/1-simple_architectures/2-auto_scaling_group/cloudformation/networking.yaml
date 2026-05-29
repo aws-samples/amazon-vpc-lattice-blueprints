@@ -10,6 +10,21 @@ Resources:
       AuthType: NONE
       Name: service-network
 
+  # ---------- VPC LATTICE ACCESS LOGGING ----------
+  # CloudWatch Logs log group (access logs destination)
+  VpcLatticeAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vpclattice/${AWS::StackName}'
+      RetentionInDays: 7
+
+  # Access log subscription (service network scope - covers all associated services)
+  VpcLatticeAccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeServiceNetwork
+      DestinationArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${VpcLatticeAccessLogs}'
+
 Outputs:
   VpcLatticeServiceNetworkId:
     Value: !Ref VpcLatticeServiceNetwork

@@ -27,6 +27,19 @@ module "service_network" {
   }
 }
 
+# ---------- VPC LATTICE ACCESS LOGGING ----------
+# CloudWatch Logs log group (access logs destination)
+resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
+  name              = "/aws/vpclattice/${var.identifier}"
+  retention_in_days = 7
+}
+
+# Access log subscription (service network scope - covers all associated services)
+resource "aws_vpclattice_access_log_subscription" "service_network_access_logs" {
+  resource_identifier = module.service_network.service_network.arn
+  destination_arn     = aws_cloudwatch_log_group.vpclattice_access_logs.arn
+}
+
 # VPC Lattice service1 - VPC Lattice-generated FQDN, HTTPS listener, EC2 instance targets
 module "service1" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"

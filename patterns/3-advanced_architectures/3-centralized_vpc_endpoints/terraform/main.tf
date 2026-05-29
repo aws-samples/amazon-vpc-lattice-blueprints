@@ -9,6 +9,19 @@ resource "aws_vpclattice_service_network" "service_network" {
   auth_type = "NONE"
 }
 
+# ---------- VPC LATTICE ACCESS LOGGING ----------
+# CloudWatch Logs log group (access logs destination)
+resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
+  name              = "/aws/vpclattice/${var.identifier}"
+  retention_in_days = 7
+}
+
+# Access log subscription (service network scope - covers all associated resources)
+resource "aws_vpclattice_access_log_subscription" "service_network_access_logs" {
+  resource_identifier = aws_vpclattice_service_network.service_network.arn
+  destination_arn     = aws_cloudwatch_log_group.vpclattice_access_logs.arn
+}
+
 # ---------- RESOURCE CONFIGURATIONS AND SERVICE NETWORK ASSOCIATION ----------
 # Resource configuration (1 per endpoint)
 resource "awscc_vpclattice_resource_configuration" "resource_configuration" {
@@ -46,7 +59,7 @@ resource "awscc_vpclattice_service_network_resource_association" "resource_assoc
 # ---------- CENTRAL VPC ENDPOINTS ----------
 module "endpoints_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "4.7.3"
+  version = "= 4.7.3"
 
   name                                 = "endpoints-vpc-${var.identifier}"
   az_count                             = 2
@@ -105,7 +118,7 @@ resource "aws_vpc_security_group_egress_rule" "allowing_egress_any_tcp" {
 # VPC
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "4.7.3"
+  version = "= 4.7.3"
 
   name                                 = "consumer-vpc-${var.identifier}"
   az_count                             = 2
@@ -129,7 +142,7 @@ resource "awscc_vpclattice_service_network_vpc_association" "service_network_vpc
   private_dns_enabled = true
   dns_options = {
     private_dns_preference        = "SPECIFIED_DOMAINS_ONLY"
-    private_dns_specified_domains = ["*.amazonaws.com"]
+    private_dns_specified_domains = ["*.amazonaws.com", "example.com"]
   }
 }
 
