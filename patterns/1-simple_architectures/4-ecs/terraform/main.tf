@@ -256,7 +256,7 @@ resource "aws_ecs_service" "ecs_service" {
 
 # Security Group - ECS Tasks
 resource "aws_security_group" "ecs_tasks" {
-  name        = "provider-ecs-tasks"
+  name        = "provider-vpc-ecs-tasks-security-group-${var.identifier}"
   description = "Allow inbound traffic for ECS tasks"
   vpc_id      = module.provider_vpc.vpc_attributes.id
 }

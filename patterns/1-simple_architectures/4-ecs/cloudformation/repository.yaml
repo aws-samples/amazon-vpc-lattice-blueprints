@@ -19,7 +19,7 @@ Outputs:
   ECRRepositoryUri:
     Description: ECR Repository URI
     Value: !GetAtt ECRRepository.RepositoryUri
-  
+
   ECRRepositoryArn:
     Description: ECR Repository ARN
     Value: !GetAtt ECRRepository.Arn
