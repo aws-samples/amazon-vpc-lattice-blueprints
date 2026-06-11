@@ -177,7 +177,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub provider-eigw-{AWS::StackName}
+          Value: !Sub provider-eigw-${AWS::StackName}
 
   # For::Each iteration: per subnet type (Workload, Endpoints) and AZ (2 AZs)
   # Resources to create: 4 subnets, 4 route tables, 4 route table associations - obtaining AZ affinity
