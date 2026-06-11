@@ -11,7 +11,7 @@ deploy-consumer:
 
 deploy-provider: SERVICENETWORK = $(shell aws cloudformation describe-stacks --stack-name "vpclattice-instance-target-networking" --query 'Stacks[0].Outputs[?OutputKey == `VpcLatticeServiceNetworkId`].OutputValue' --output text --region eu-west-1 )
 deploy-provider: CONSUMERVPC = $(shell aws cloudformation describe-stacks --stack-name "vpclattice-instance-consumer" --query 'Stacks[0].Outputs[?OutputKey == `ConsumerVpcId`].OutputValue' --output text --region eu-west-1 )
-deploy-provider: 
+deploy-provider:
 	aws cloudformation deploy --stack-name vpclattice-instance-provider --template-file provider.yaml \
         --parameter-overrides \
         ServiceNetworkId="$(SERVICENETWORK)" \

@@ -1,6 +1,6 @@
 # Amazon VPC Lattice - EC2 Instance Target (AWS CloudFormation)
 
-![EC2 Instance Architecture](../../../../images/pattern1_architecture1.png)
+CloudFormation implementation of the EC2 Instance pattern. For the architecture, what gets deployed, and the connectivity testing steps, see the [pattern README](../README.md).
 
 ## Prerequisites
 
@@ -49,15 +49,22 @@ make deploy-provider  # provider VPC and VPC Lattice services
 make undeploy
 ```
 
+> **Note**: The access-logging CloudWatch Logs log group (`/aws/vpclattice/<stack-name>`) is part of the service-network stack and is removed when the stacks are deleted — no manual cleanup is required.
+
+## Observability: Access logging
+
+This pattern enables VPC Lattice **access logging** by default. An access log subscription on the service network records a log entry for every request that flows through it and sends it to a CloudWatch Logs log group named `/aws/vpclattice/<stack-name>` (7-day retention), created as part of the stack.
+
+- **Where to find the logs**: CloudWatch Logs console → **Log groups** → `/aws/vpclattice/<stack-name>`, or from the CLI:
+
+  ```bash
+  aws logs tail /aws/vpclattice/<stack-name> --follow
+  ```
+
+- **How to interpret them**: each entry records one request through the service network/service (source, target, response code, timing) — useful for observability and, for auth-enabled services, for confirming auth allow/deny decisions.
+
+> **Cost note**: Access logging uses CloudWatch Logs vended-logs pricing (ingestion + storage). For this demo it is a small ongoing cost while the stack is deployed.
+
 ## Testing
 
-After successful deployment, follow the testing instructions in the [Testing Connectivity](../README.md#testing-connectivity) section of the EC2 Instance pattern documentation.
-
-## Next Steps
-
-After successfully deploying this pattern:
-
-1. **Test connectivity**: Follow the testing guide to verify both services work correctly.
-2. **Explore other targets**: Try [Auto Scaling Group](../../2-auto_scaling_group/), [Lambda](../../3-lambda_function/), or [ECS](../../4-ecs/) patterns.
-3. **Multi-Account**: Move to [Multi-Account patterns](../../../2-multi_account/) for cross-account deployments.
-4. **Advanced architectures**: Explore [Advanced patterns](../../../3-advanced_architectures/) for more complex scenarios.
+After successful deployment, follow the [Testing Connectivity](../README.md#testing-connectivity) steps in the pattern README to verify both VPC Lattice services.

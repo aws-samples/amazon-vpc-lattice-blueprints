@@ -354,6 +354,13 @@ resource "aws_instance" "web_instance" {
 # Update system and install httpd
 sudo yum update -y
 sudo yum install -y httpd php
+
+# Ensure httpd listens on both IPv4 and IPv6
+# Remove any existing Listen directives and add explicit ones
+sudo sed -i '/^Listen /d' /etc/httpd/conf/httpd.conf
+echo "Listen 0.0.0.0:80" | sudo tee -a /etc/httpd/conf/httpd.conf
+echo "Listen [::]:80" | sudo tee -a /etc/httpd/conf/httpd.conf
+
 sudo systemctl start httpd
 sudo systemctl enable httpd
 sudo chown -R $USER:$USER /var/www
