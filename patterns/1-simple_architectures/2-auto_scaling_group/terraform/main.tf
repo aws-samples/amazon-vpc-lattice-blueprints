@@ -24,7 +24,6 @@ module "service_network" {
   }
 }
 
-# ---------- VPC LATTICE ACCESS LOGGING ----------
 # CloudWatch Logs log group (access logs destination)
 resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
   name              = "/aws/vpclattice/${var.identifier}"
@@ -250,6 +249,12 @@ resource "aws_launch_template" "launch_template_webinstance" {
 # Update system and install httpd
 sudo yum update -y
 sudo yum install -y httpd php
+
+# Ensure httpd listens on both IPv4 and IPv6
+sudo sed -i '/^Listen /d' /etc/httpd/conf/httpd.conf
+echo "Listen 0.0.0.0:80" | sudo tee -a /etc/httpd/conf/httpd.conf
+echo "Listen [::]:80" | sudo tee -a /etc/httpd/conf/httpd.conf
+
 sudo systemctl start httpd
 sudo systemctl enable httpd
 sudo chown -R $USER:$USER /var/www
