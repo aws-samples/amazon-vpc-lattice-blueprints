@@ -6,13 +6,13 @@ def lambda_handler(event, context):
     # Extract the source IP from the request context
     request_context = event.get('requestContext', {})
     source_ip = request_context.get('http', {}).get('sourceIp', 'Unknown')
-    
+
     # Create response with message and request IP
     response_body = {
         'message': 'Hello from Lambda Function!!',
         'request_ip': source_ip
     }
-    
+
     return {
         'statusCode': 200,
         'headers': {

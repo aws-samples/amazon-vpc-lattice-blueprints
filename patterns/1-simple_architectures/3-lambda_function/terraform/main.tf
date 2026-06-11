@@ -3,15 +3,6 @@
 
 # --- patterns/1-simple_architectures/3-lambda_function/terraform/main.tf ---
 
-# Data source: Amazon VPC Lattice prefix list (IPv4 and IPv6)
-data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv4" {
-  name = "com.amazonaws.${var.aws_region}.vpc-lattice"
-}
-
-data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv6" {
-  name = "com.amazonaws.${var.aws_region}.ipv6.vpc-lattice"
-}
-
 # ---------- VPC LATTICE RESOURCES ----------
 # VPC Lattice service network
 module "service_network" {
@@ -24,7 +15,6 @@ module "service_network" {
   }
 }
 
-# ---------- VPC LATTICE ACCESS LOGGING ----------
 # CloudWatch Logs log group (access logs destination)
 resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
   name              = "/aws/vpclattice/${var.identifier}"
@@ -130,7 +120,7 @@ resource "aws_vpc_security_group_ingress_rule" "allowing_ingress_instances_https
 # ---------- PROVIDER LAMBDA FUNCTION ----------
 # AWS Lambda Function
 resource "aws_lambda_function" "lambda" {
-  function_name    = "lambda_function"
+  function_name    = "provider-function-${var.identifier}"
   filename         = "lambda_function.zip"
   source_code_hash = data.archive_file.python_lambda_package.output_base64sha256
 
@@ -147,7 +137,7 @@ data "archive_file" "python_lambda_package" {
 
 # IAM Role
 resource "aws_iam_role" "lambda_role" {
-  name = "lambda-route53-role"
+  name = "provider-function-role-${var.identifier}"
   path = "/"
 
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role_policy.json

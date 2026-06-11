@@ -16,13 +16,13 @@ Resources:
     Properties:
       Name: !Sub service-${AWS::StackName}
       AuthType: NONE
-  
+
   VpcLatticeServiceServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
     Properties:
       ServiceIdentifier: !Ref VpcLatticeService
       ServiceNetworkIdentifier: !Ref ServiceNetworkId
-  
+
   VpcLatticeServiceHTTPSListener:
     Type: AWS::VpcLattice::Listener
     Properties:
@@ -30,7 +30,7 @@ Resources:
       ServiceIdentifier: !Ref VpcLatticeService
       Port: 443
       Protocol: HTTPS
-      DefaultAction: 
+      DefaultAction:
         Forward:
           TargetGroups:
             - TargetGroupIdentifier: !Ref VpcLatticeTargetGroup
@@ -78,13 +78,13 @@ Resources:
               # Extract the source IP from the request context
               request_context = event.get('requestContext', {})
               source_ip = request_context.get('http', {}).get('sourceIp', 'Unknown')
-              
+
               # Create response with message and request IP
               response_body = {
                   'message': 'Hello from Lambda Function!!',
                   'request_ip': source_ip
               }
-              
+
               return {
                   'statusCode': 200,
                   'headers': {
@@ -104,5 +104,5 @@ Resources:
 
 Outputs:
   ServiceDomainName:
-    Type: String
+    Description: VPC Lattice service domain name
     Value: !GetAtt VpcLatticeService.DnsEntry.DomainName
