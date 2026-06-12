@@ -10,7 +10,7 @@ resource "aws_vpclattice_resource_gateway" "resource_gateway" {
   vpc_id             = module.provider_vpc.vpc_attributes.id
   subnet_ids         = values({ for k, v in module.provider_vpc.private_subnet_attributes_by_az : split("/", k)[1] => v.id if split("/", k)[0] == "resourcegateway" })
   ip_address_type    = "DUALSTACK"
-  security_group_ids = [aws_security_group.provider_rgw_sg.id]
+  security_group_ids = [aws_security_group.provider_resource_gateway_sg.id]
 }
 
 # Resource configuration
@@ -44,6 +44,19 @@ module "service_network" {
   }
 }
 
+# ---------- VPC LATTICE ACCESS LOGGING ----------
+# CloudWatch Logs log group (access logs destination)
+resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
+  name              = "/aws/vpclattice/${var.identifier}"
+  retention_in_days = 7
+}
+
+# Access log subscription (service network scope - covers all associated services)
+resource "aws_vpclattice_access_log_subscription" "service_network_access_logs" {
+  resource_identifier = module.service_network.service_network.arn
+  destination_arn     = aws_cloudwatch_log_group.vpclattice_access_logs.arn
+}
+
 # ---------- CONSUMER VPC AND EC2 INSTANCES ----------
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
@@ -52,12 +65,14 @@ module "consumer_vpc" {
   name                                 = "consumer-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
   vpc_assign_generated_ipv6_cidr_block = true
+  vpc_egress_only_internet_gateway     = true
   az_count                             = var.vpc.number_azs
 
   subnets = {
     workload = {
       netmask          = var.vpc.private_subnet_netmask
       assign_ipv6_cidr = true
+      connect_to_eigw  = true
     }
     endpoints = {
       netmask          = var.vpc.endpoints_subnet_netmask
@@ -77,15 +92,6 @@ resource "aws_vpclattice_service_network_vpc_association" "vpc_assocation" {
   }
 }
 
-module "consumer_instances" {
-  source = "../../../tf_modules/consumer_instance"
-
-  identifier      = var.identifier
-  vpc_name        = "consumer-vpc"
-  vpc             = module.consumer_vpc
-  vpc_information = var.vpc
-}
-
 # Security Group (VPC Lattice VPC association)
 resource "aws_security_group" "vpclattice_sg" {
   name        = "consumer-vpc-vpclattice-security-group-${var.identifier}"
@@ -93,8 +99,24 @@ resource "aws_security_group" "vpclattice_sg" {
   vpc_id      = module.consumer_vpc.vpc_attributes.id
 }
 
-resource "aws_vpc_security_group_ingress_rule" "allowing_ingress_instances_https" {
+resource "aws_vpc_security_group_ingress_rule" "allowing_ingress_instances_tcp" {
   security_group_id = aws_security_group.vpclattice_sg.id
+
+  from_port                    = 3306
+  to_port                      = 3306
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = module.consumer_instances.consumer_sg
+}
+
+# Security Group (VPC endpoint)
+resource "aws_security_group" "secretsmanager_endpoint_sg" {
+  name        = "consumer-vpc-secretsmanager-endpoint-security-group-${var.identifier}"
+  description = "Secrets Manager interface endpoint Security Group"
+  vpc_id      = module.consumer_vpc.vpc_attributes.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "secretsmanager_endpoint_ingress_https" {
+  security_group_id = aws_security_group.secretsmanager_endpoint_sg.id
 
   from_port                    = 443
   to_port                      = 443
@@ -102,15 +124,63 @@ resource "aws_vpc_security_group_ingress_rule" "allowing_ingress_instances_https
   referenced_security_group_id = module.consumer_instances.consumer_sg
 }
 
-# ---------- PRIVATE HOSTED ZONE ----------
-# # Private Hosted Zone
-# resource "aws_route53_zone" "private_hosted_zone" {
-#   name = "var.hosted_zone_name"
+# VPC endpoint - Secrets Manager
+resource "aws_vpc_endpoint" "secretsmanager" {
+  vpc_id              = module.consumer_vpc.vpc_attributes.id
+  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = values({ for k, v in module.consumer_vpc.private_subnet_attributes_by_az : split("/", k)[1] => v.id if split("/", k)[0] == "endpoints" })
+  security_group_ids  = [aws_security_group.secretsmanager_endpoint_sg.id]
+}
 
-#   vpc {
-#     vpc_id = module.consumer_vpc.vpc_attributes.id
-#   }
-# }
+# EC2 instances
+module "consumer_instances" {
+  source = "../../../tf_modules/consumer_instance"
+
+  identifier            = var.identifier
+  vpc_name              = "consumer-vpc"
+  vpc                   = module.consumer_vpc
+  vpc_information       = var.vpc
+  instance_profile_name = aws_iam_instance_profile.consumer_instance.name
+}
+
+# ---------- CONSUMER INSTANCE IAM (read the RDS-managed secret) ----------
+data "aws_iam_policy_document" "consumer_instance_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "consumer_read_secret" {
+  statement {
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_rds_cluster.aurora_cluster.master_user_secret[0].secret_arn]
+  }
+}
+
+resource "aws_iam_role" "consumer_instance" {
+  name               = "consumer-instance-role-${var.identifier}"
+  assume_role_policy = data.aws_iam_policy_document.consumer_instance_assume_role.json
+}
+
+resource "aws_iam_role_policy" "consumer_read_secret" {
+  name   = "read-rds-primary-user-secret"
+  role   = aws_iam_role.consumer_instance.id
+  policy = data.aws_iam_policy_document.consumer_read_secret.json
+}
+
+resource "aws_iam_instance_profile" "consumer_instance" {
+  name = "consumer-instance-profile-${var.identifier}"
+  role = aws_iam_role.consumer_instance.name
+}
 
 # ---------- PROVIDER (AURORA INSTANCE) ----------
 # Provider VPC
@@ -146,15 +216,18 @@ resource "aws_db_subnet_group" "aurora_subnet_group" {
 }
 
 # Aurora Cluster
+# Credentials are managed by RDS and stored in AWS Secrets Manager. No password is ever defined in code.
 resource "aws_rds_cluster" "aurora_cluster" {
-  cluster_identifier     = "aurora-${var.identifier}"
-  engine                 = var.aurora_db_configuration.engine
-  database_name          = var.aurora_db_configuration.db_name
-  master_username        = var.aurora_db_configuration.username
-  master_password        = var.aurora_db_configuration.password
-  db_subnet_group_name   = aws_db_subnet_group.aurora_subnet_group.name
-  vpc_security_group_ids = [aws_security_group.aurora_sg.id]
-  skip_final_snapshot    = true
+  cluster_identifier          = "aurora-${var.identifier}"
+  engine                      = var.aurora_db_configuration.engine
+  engine_version              = var.aurora_db_configuration.engine_version
+  database_name               = var.aurora_db_configuration.db_name
+  master_username             = var.aurora_db_configuration.username
+  manage_master_user_password = true
+  db_subnet_group_name        = aws_db_subnet_group.aurora_subnet_group.name
+  vpc_security_group_ids      = [aws_security_group.aurora_sg.id]
+  storage_encrypted           = true
+  skip_final_snapshot         = true
 }
 
 # Aurora Instance
@@ -165,15 +238,15 @@ resource "aws_rds_cluster_instance" "aurora_instance" {
   engine             = aws_rds_cluster.aurora_cluster.engine
 }
 
-# Security Group: Resource Configuration
-resource "aws_security_group" "provider_rgw_sg" {
+# Security Group: Resource Gateway
+resource "aws_security_group" "provider_resource_gateway_sg" {
   name        = "provider-vpc-resource-gateway-security-group-${var.identifier}"
   description = "Resource Gateway Security Group"
   vpc_id      = module.provider_vpc.vpc_attributes.id
 }
 
 resource "aws_vpc_security_group_egress_rule" "provider_allowing_egress_db_ipv4" {
-  security_group_id = aws_security_group.provider_rgw_sg.id
+  security_group_id = aws_security_group.provider_resource_gateway_sg.id
 
   from_port   = 3306
   to_port     = 3306
@@ -182,7 +255,7 @@ resource "aws_vpc_security_group_egress_rule" "provider_allowing_egress_db_ipv4"
 }
 
 resource "aws_vpc_security_group_egress_rule" "provider_allowing_egress_db_ipv6" {
-  security_group_id = aws_security_group.provider_rgw_sg.id
+  security_group_id = aws_security_group.provider_resource_gateway_sg.id
 
   from_port   = 3306
   to_port     = 3306
@@ -197,13 +270,13 @@ resource "aws_security_group" "aurora_sg" {
   vpc_id      = module.provider_vpc.vpc_attributes.id
 }
 
-resource "aws_vpc_security_group_ingress_rule" "provider_allowing_ingress_rcg" {
+resource "aws_vpc_security_group_ingress_rule" "provider_allowing_ingress_resource_gateway" {
   security_group_id = aws_security_group.aurora_sg.id
 
   from_port                    = 3306
   to_port                      = 3306
   ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.provider_rgw_sg.id
+  referenced_security_group_id = aws_security_group.provider_resource_gateway_sg.id
 }
 
 resource "aws_vpc_security_group_egress_rule" "provider_allowing_egress_any_ipv4" {

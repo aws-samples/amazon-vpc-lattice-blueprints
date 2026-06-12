@@ -1,0 +1,32 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: Central AWS Networking services - VPC Lattice service network (RDS / VPC Resources pattern)
+
+Resources:
+  # ---------- VPC LATTICE SERVICE NETWORK ----------
+  VpcLatticeServiceNetwork:
+    Type: AWS::VpcLattice::ServiceNetwork
+    Properties:
+      AuthType: NONE
+      Name: service-network
+
+  # ---------- VPC LATTICE ACCESS LOGGING ----------
+  # CloudWatch Logs log group (access logs destination)
+  VpcLatticeAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vpclattice/${AWS::StackName}'
+      RetentionInDays: 7
+
+  # Access log subscription (service network scope - covers all associated resources)
+  VpcLatticeAccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeServiceNetwork
+      DestinationArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${VpcLatticeAccessLogs}'
+
+Outputs:
+  VpcLatticeServiceNetworkId:
+    Value: !Ref VpcLatticeServiceNetwork
+    Description: VPC Lattice service network ID

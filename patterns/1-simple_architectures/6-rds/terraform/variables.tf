@@ -26,19 +26,20 @@ variable "vpc" {
     cidr_block               = "10.0.0.0/16"
     private_subnet_netmask   = 24
     endpoints_subnet_netmask = 24
-    instance_type            = "t2.micro"
+    instance_type            = "t3.micro"
   }
 }
 
 variable "aurora_db_configuration" {
   type        = map(string)
-  description = "RDS instance configuration."
+  description = "RDS instance configuration. Primary credentials are managed by RDS in AWS Secrets Manager; no password is stored here."
+  sensitive   = true
 
   default = {
     engine         = "aurora-mysql"
+    engine_version = "8.0.mysql_aurora.3.12.0"
     instance_class = "db.t3.medium"
     db_name        = "mydb"
     username       = "admin"
-    password       = "admin123"
   }
 }

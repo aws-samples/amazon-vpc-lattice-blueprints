@@ -3,37 +3,42 @@
 
 # --- patterns/1-simple_architectures/6-rds/terraform/outputs.tf ---
 
+# Consumer EC2 instance IDs. Use these with Session Manager or EC2 Instance
+# Connect to log in and run the documented connectivity tests (resolve the
+# Aurora endpoint -> link-local, then connect with the MySQL client).
+output "consumer_instance_ids" {
+  description = "Consumer EC2 instance IDs (use with Session Manager / EC2 Instance Connect)."
+  value       = module.consumer_instances.ec2_instances
+}
+
+# Aurora cluster endpoints. From the consumer instance these domain names
+# resolve to VPC Lattice link-local addresses (169.254.171.x / fd00:ec2:80::/64)
+# thanks to the service network VPC association private DNS.
 output "aurora" {
+  description = "Aurora cluster endpoints resolved through VPC Lattice from the consumer VPC."
   value = {
     writer = aws_rds_cluster.aurora_cluster.endpoint
     reader = aws_rds_cluster.aurora_cluster.reader_endpoint
   }
 }
 
-output "phz_domain_names" {
+# VPC Lattice resource configuration reference. The resource configuration
+# (ARN type, pointing at the Aurora cluster) does not expose a generated domain
+# name attribute; the consumer resolves the Aurora endpoint above. The id/arn
+# are surfaced here for inspection and troubleshooting of the resource path.
+output "resource_configuration" {
+  description = "VPC Lattice resource configuration id and ARN (ARN type, targets the Aurora cluster)."
   value = {
-    writer = replace(aws_rds_cluster.aurora_cluster.endpoint, "/^${aws_rds_cluster.aurora_cluster.cluster_identifier}\\./", "")
-    reader = replace(aws_rds_cluster.aurora_cluster.reader_endpoint, "/^${aws_rds_cluster.aurora_cluster.cluster_identifier}\\./", "")
+    id  = aws_vpclattice_resource_configuration.resource_configuration.id
+    arn = aws_vpclattice_resource_configuration.resource_configuration.arn
   }
 }
 
-# data "awscc_vpclattice_service_network_resource_associations" "resource_associations" {}
-
-# data "awscc_vpclattice_service_network_resource_association" "resource_association_1" {
-#     id = tolist(data.awscc_vpclattice_service_network_resource_associations.resource_associations.ids)[1]
-# }
-
-# data "awscc_vpclattice_service_network_resource_association" "resource_association_2" {
-#     id = tolist(data.awscc_vpclattice_service_network_resource_associations.resource_associations.ids)[2]
-# }
-
-# output "resource_associations" {
-#     value = toset(data.awscc_vpclattice_service_network_resource_associations.resource_associations.ids)
-# }
-
-# output "resource_association" {
-#     value = {
-#         one = data.awscc_vpclattice_service_network_resource_association.resource_association_1
-#         two = data.awscc_vpclattice_service_network_resource_association.resource_association_2
-#     }
-# }
+# ARN reference to the RDS-managed primary password secret in AWS Secrets
+# Manager. This is the secret ARN only, never the secret value. Retrieve the
+# credentials from the consumer instance with the AWS CLI / Secrets Manager API
+# to connect to Aurora.
+output "rds_primary_user_secret_arn" {
+  description = "ARN of the RDS-managed primary user secret in AWS Secrets Manager (reference only, not the secret value)."
+  value       = aws_rds_cluster.aurora_cluster.master_user_secret[0].secret_arn
+}
