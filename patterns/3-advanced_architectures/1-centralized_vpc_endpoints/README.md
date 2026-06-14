@@ -2,7 +2,7 @@
 
 This pattern centralizes interface VPC endpoints in a shared **endpoints VPC** and makes them reachable from consumer VPCs through VPC Lattice **VPC Resources** (a resource gateway plus resource configurations). Instead of duplicating interface endpoints in every VPC, consumers can reach AWS services through the centralized endpoints (cutting cost and simplifying endpoint management).
 
-<!-- TODO: add architecture diagram, e.g. ![Centralized VPC Endpoints](../../../images/pattern3_architecture1.png) -->
+![Centralized VPC endpoints](../../../images/pattern3_architecture1.png)
 
 Each AWS service endpoint is fronted by a resource configuration with a **custom domain name** (e.g. `ssm.<region>.amazonaws.com`). Controlled private DNS on the consumer VPC association (scoped to `*.amazonaws.com` only) makes the consumer's normal `ssm.<region>.amazonaws.com` lookup resolve to a VPC Lattice managed address (`129.224.0.x/17`) and route to the central endpoint, with no client configuration changes.
 
