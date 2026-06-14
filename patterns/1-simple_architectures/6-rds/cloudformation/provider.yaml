@@ -261,7 +261,7 @@ Outputs:
     Value: !GetAtt ResourceConfiguration.Arn
 
   AuroraWriterEndpoint:
-    Description: Aurora cluster writer endpoint (resolves to a VPC Lattice link-local address from the consumer VPC).
+    Description: Aurora cluster writer endpoint (resolves to a VPC Lattice-managed address, 129.224.0.x/17, from the consumer VPC).
     Value: !GetAtt AuroraCluster.Endpoint.Address
 
   AuroraReaderEndpoint:

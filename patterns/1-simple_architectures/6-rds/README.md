@@ -4,7 +4,7 @@ This pattern demonstrates the **VPC Lattice VPC Resources** (resource gateway) m
 
 ![RDS target](../../../images/pattern1_architecture6.png)
 
-From the consumer EC2 instance, the Aurora endpoint resolves to a VPC Lattice **link-local** address (`169.254.171.x/24`, IPv6 `fd00:ec2:80::/64`); the MySQL client then connects to Aurora over TCP through VPC Lattice using the credentials stored in Secrets Manager.
+From the consumer EC2 instance, the Aurora endpoint resolves to a VPC Lattice-managed address (IPv4 `129.224.0.x/17`, IPv6 `fd00:ec2:80::/64`); the MySQL client then connects to Aurora over TCP through VPC Lattice using the credentials stored in Secrets Manager.
 
 ## What gets deployed
 
@@ -44,14 +44,12 @@ This pattern is available for both IaC tools (CloudFormation + Terraform parity)
 
 ## Testing Connectivity
 
-After deploying either implementation, you connect to the consumer EC2 instance and, **from the instance**, resolve the Aurora endpoint through VPC Lattice (it returns a link-local `169.254.171.x` address), read the RDS-managed credentials from AWS Secrets Manager (the instance has a scoped IAM role and a private Secrets Manager interface endpoint), and connect to the database with a MySQL client. A successful query proves TCP-over-Lattice connectivity to a native AWS resource across two VPCs that both use `10.0.0.0/16`, with no VPC peering or transit gateway.
-
-> **Where each step runs:** steps tagged **🖥️ Workstation** run on your local machine (AWS CLI configured, where you deployed); steps tagged **📦 Consumer instance** run inside the consumer EC2 instance shell you open in Step 1.
+After deploying either implementation, you connect to the consumer EC2 instance and, **from the instance**, resolve the Aurora endpoint through VPC Lattice (it returns a VPC Lattice-managed `129.224.0.x` address), read the RDS-managed credentials from AWS Secrets Manager (the instance has a scoped IAM role and a private Secrets Manager interface endpoint), and connect to the database with a MySQL client. A successful query proves TCP-over-Lattice connectivity to a native AWS resource across two VPCs that both use `10.0.0.0/16`.
 
 <details>
 <summary>Click to expand testing steps</summary>
 
-#### Get the deployment outputs — 🖥️ Workstation
+#### Get the deployment outputs
 
 The steps below use a handful of values produced by the deployment. Retrieve them first, on your workstation; you'll paste the Aurora endpoint and secret ARN into the instance session later.
 
@@ -99,9 +97,9 @@ aws ec2-instance-connect ssh --instance-id <consumer-instance-id>
 
 Everything from here (Steps 2–4) runs **inside the instance shell** you just opened.
 
-#### Step 2: Resolve the Aurora endpoint (link-local) through VPC Lattice
+#### Step 2: Resolve the Aurora endpoint through VPC Lattice
 
-Resolve the Aurora writer endpoint. Because the consumer VPC is associated to the service network with private DNS enabled (`ALL_DOMAINS`), the endpoint resolves to a VPC Lattice **link-local** address rather than to Aurora's real private IP:
+Resolve the Aurora writer endpoint. Because the consumer VPC is associated to the service network with private DNS enabled (`ALL_DOMAINS`), the endpoint resolves to a VPC Lattice-managed address rather than to Aurora's real private IP:
 
 ```bash
 # Any of these work — use whichever is available on the instance
@@ -110,7 +108,7 @@ nslookup <aurora-writer-endpoint>
 getent hosts <aurora-writer-endpoint>
 ```
 
-**Expected result**: an address in the VPC Lattice link-local range `129.224.x.0/17` (IPv6 `fd00:ec2:80::/64`). This address confirms traffic to Aurora is being brokered by VPC Lattice.
+**Expected result**: an address in the VPC Lattice VPC-resources range `129.224.0.x/17` (IPv6 `fd00:ec2:80::/64`). This address confirms traffic to Aurora is being brokered by VPC Lattice.
 
 #### Step 3: Read the database credentials from AWS Secrets Manager
 

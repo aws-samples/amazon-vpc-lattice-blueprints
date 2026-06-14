@@ -65,4 +65,4 @@ This pattern enables VPC Lattice **access logging** by default. An access log su
 
 ## Testing
 
-After successful deployment, follow the [Testing Connectivity](../README.md#testing-connectivity) steps in the pattern README to connect to the consumer instance, resolve the Aurora endpoint (link-local) through VPC Lattice, and connect to Aurora with a MySQL client using the Secrets Manager credentials.
+After successful deployment, follow the [Testing Connectivity](../README.md#testing-connectivity) steps in the pattern README to connect to the consumer instance, resolve the Aurora endpoint through VPC Lattice, and connect to Aurora with a MySQL client using the Secrets Manager credentials.

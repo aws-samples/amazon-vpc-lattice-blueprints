@@ -5,14 +5,14 @@
 
 # Consumer EC2 instance IDs. Use these with Session Manager or EC2 Instance
 # Connect to log in and run the documented connectivity tests (resolve the
-# Aurora endpoint -> link-local, then connect with the MySQL client).
+# Aurora endpoint -> VPC Lattice-managed address, then connect with the MySQL client).
 output "consumer_instance_ids" {
   description = "Consumer EC2 instance IDs (use with Session Manager / EC2 Instance Connect)."
   value       = module.consumer_instances.ec2_instances
 }
 
 # Aurora cluster endpoints. From the consumer instance these domain names
-# resolve to VPC Lattice link-local addresses (169.254.171.x / fd00:ec2:80::/64)
+# resolve to VPC Lattice-managed addresses (129.224.0.x/17 / fd00:ec2:80::/64)
 # thanks to the service network VPC association private DNS.
 output "aurora" {
   description = "Aurora cluster endpoints resolved through VPC Lattice from the consumer VPC."
