@@ -70,8 +70,6 @@ dig <service-domain-name>
 
 **Expected Result**: Link-local address (169.254.171.X) indicating VPC Lattice routing
 
-![Pattern4 - DNS Resolution](../../../images/pattern1_architecture4_testing_dns-resolution.png)
-
 #### Step 3: Test HTTPS Connectivity
 
 Test connectivity to the ECS Fargate service through VPC Lattice:
@@ -88,8 +86,6 @@ curl https://<service-domain-name>
 }
 ```
 
-![Pattern4 - Connectivity](../../../images/pattern1_architecture4_testing_connectivity.png)
-
 #### Step 4: Verify Target Health
 
 Check that ECS tasks are healthy:
@@ -97,8 +93,6 @@ Check that ECS tasks are healthy:
 1. Navigate to **VPC → VPC Lattice → Target groups**
 2. Select the ECS service's IP type target group
 3. Verify ECS task IPs show **"Healthy"** status
-
-![Pattern4 - Target Health Status](../../../images/pattern1_architecture4_testing_healthcheck.png)
 
 </details>
 

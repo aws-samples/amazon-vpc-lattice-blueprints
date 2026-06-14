@@ -110,8 +110,6 @@ nslookup <aurora-writer-endpoint>
 getent hosts <aurora-writer-endpoint>
 ```
 
-![Pattern6 - DNS Resolution](../../../images/pattern1_architecture6_testing_dns-resolution.png)
-
 **Expected result**: an address in the VPC Lattice link-local range `129.224.x.0/17` (IPv6 `fd00:ec2:80::/64`). This address confirms traffic to Aurora is being brokered by VPC Lattice.
 
 #### Step 3: Read the database credentials from AWS Secrets Manager
@@ -149,8 +147,6 @@ Connect using the Aurora **writer endpoint** and the primary username, reusing t
 ```bash
 MYSQL_PWD="$DB_PASSWORD" mysql -h <aurora-writer-endpoint> -u "$DB_USERNAME"
 ```
-
-![Pattern6 - Connectivity](../../../images/pattern1_architecture6_testing_connectivity.png)
 
 Once connected, run a simple query to prove connectivity to the native AWS resource over TCP through VPC Lattice:
 

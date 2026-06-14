@@ -68,8 +68,6 @@ Verify VPC Lattice DNS resolution:
 dig <service-domain-name>
 ```
 
-![Pattern3 - DNS Resolution](../../../images/pattern1_architecture3_testing_dns-resolution.png)
-
 **Expected Result**: Link-local address (169.254.171.X) indicating VPC Lattice routing
 
 #### Step 3: Test HTTPS Connectivity
@@ -87,8 +85,6 @@ curl https://<service-domain-name>
   "request_ip": "169.254.171.X"
 }
 ```
-
-![Pattern3 - Connectivity](../../../images/pattern1_architecture3_testing_connectivity.png)
 
 </details>
 

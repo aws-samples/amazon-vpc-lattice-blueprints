@@ -72,8 +72,6 @@ dig <service-domain-name>
 
 **Expected Result**: Link-local address (169.254.171.X) indicating VPC Lattice routing
 
-![Pattern2 - DNS Resolution](../../../images/pattern1_architecture2_testing_dns-resolution.png)
-
 #### Step 3: Test HTTPS Connectivity
 
 Test connectivity to the service:
@@ -86,8 +84,6 @@ curl https://<service-domain-name>
 - "Hello from the AutoScaling Group!!"
 - Request IP address (VPC Lattice IP showing which instance handled the request)
 
-![Pattern2 - Connectivity](../../../images/pattern1_architecture2_testing_connectivity.png)
-
 #### Step 4: Verify Target Health
 
 Check that all Auto Scaling group instances are healthy:
@@ -95,8 +91,6 @@ Check that all Auto Scaling group instances are healthy:
 1. Navigate to **VPC → VPC Lattice → Target groups**
 2. Select the Auto Scaling group's INSTANCE type target group
 3. Verify all instances show **"Healthy"** status
-
-![Pattern2 - Target Health Status](../../../images/pattern1_architecture2_testing_healthcheck.png)
 
 </details>
 

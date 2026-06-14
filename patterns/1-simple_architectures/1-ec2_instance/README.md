@@ -77,8 +77,6 @@ Verify VPC Lattice DNS resolution for both services:
 | **Service 1** | `dig <service1-domain-name>` | Link-local address (`169.254.171.x`) indicating VPC Lattice routing |
 | **Service 2** | `dig <custom-domain-name>` | Link-local address (`169.254.171.x`) — ALIAS record configured |
 
-![Pattern1 - DNS Resolution](../../../images/pattern1_architecture1_testing_dns-resolution.png)
-
 #### Step 3: Test HTTPS connectivity
 
 Test connectivity to both services using the same curl command with their respective domain names:
@@ -94,8 +92,6 @@ curl https://<custom-domain-name>
 **Expected response:**
 - "Hello from EC2 instance"
 - Request IP address (VPC Lattice IP — IPv4 or IPv6 depending on which target group was used)
-
-![Pattern1 - Connectivity](../../../images/pattern1_architecture1_testing_connectivity.png)
 
 #### Step 4: Test load distribution
 
@@ -113,8 +109,6 @@ Check that all targets are healthy in the AWS Console:
 1. Navigate to **VPC → VPC Lattice → Target groups**
 2. Select each of the three target groups (one INSTANCE type, one IPv4 IP type, one IPv6 IP type)
 3. Verify all targets show **"Healthy"** status
-
-![Pattern1 - Target Health Status](../../../images/pattern1_architecture1_testing_healthcheck.png)
 
 </details>
 
