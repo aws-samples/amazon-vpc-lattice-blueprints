@@ -1,0 +1,27 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Custom EKS Auto Mode NodePool that constrains compute to arm64 (Graviton)
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: graviton
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["arm64"]
+        - key: "eks.amazonaws.com/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand"]
+  limits:
+    cpu: "100"
