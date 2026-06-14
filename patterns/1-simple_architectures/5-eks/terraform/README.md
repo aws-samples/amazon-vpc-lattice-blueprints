@@ -38,9 +38,9 @@ Tear down when finished to stop ongoing costs (Auto Mode control plane + compute
 terraform destroy
 ```
 
-Terraform tears down in the right order automatically, the `terraform_data` manifest `depends_on` the controller, so the `Gateway`/`HTTPRoute` are deleted first (letting the controller remove the VPC Lattice service + target group it created) before the controller, cluster, and VPCs.
+Terraform tears down in the right order automatically: the `terraform_data` manifest `depends_on` the controller, so on destroy it deletes the `GatewayClass`/`Gateway`/`HTTPRoute` first — letting the controller remove the VPC Lattice service + target group it created — before the controller, cluster, and VPCs. The destroy step deletes only those Gateway API objects (not the app/NodePool, which go away with the cluster) and uses a **bounded `--timeout`**, so it cannot hang indefinitely on stuck finalizers.
 
-> **⚠️ Verify afterwards.** The controller deletes asynchronously, so destroy can race ahead and orphan the VPC Lattice service/target group (a leftover association can also block the service network + consumer VPC). Confirm the service (`sample-service`) and its target group are gone, or delete any leftovers and re-run `terraform destroy` if needed.
+> **⚠️ Verify afterwards.** The controller deletes asynchronously. In the rare case it is unavailable during teardown (e.g. its node is replaced and cannot pull the controller image), the bounded delete times out and can leave an orphaned VPC Lattice service/target group (a leftover association can also block the service network + consumer VPC). Confirm the service (`sample-service`) and its target group are gone; if not, delete the service-network association → service → target group, clear any stuck `Gateway`/`HTTPRoute` finalizers (`kubectl patch ... -p '{"metadata":{"finalizers":[]}}' --type=merge`), and re-run `terraform destroy`.
 
 > **Service-linked role.** `AWSServiceRoleForVpcLattice` is not managed here (an account-global singleton, auto-created on first use) and is left in place; remove it only if no other VPC Lattice resources remain.
 

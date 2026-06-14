@@ -34,6 +34,12 @@ locals {
     ),
     "{{SERVICE_NETWORK_NAME}}", module.service_network.service_network.name
   )
+
+  # Gateway API resources only (GatewayClass/Gateway/HTTPRoute). Used on destroy
+  rendered_gateway = replace(
+    file("${path.module}/../kubernetes/gateway.yaml"),
+    "{{SERVICE_NETWORK_NAME}}", module.service_network.service_network.name
+  )
 }
 
 # ---------- VPC LATTICE SERVICE NETWORK ----------
@@ -362,10 +368,11 @@ resource "helm_release" "gateway_api_controller" {
 # ---------- GATEWAY API CRDS + GATEWAY/HTTPROUTE + SAMPLE APP ----------
 resource "terraform_data" "kubernetes_manifest" {
   input = {
-    cluster_name = aws_eks_cluster.this.name
-    region       = var.aws_region
-    manifest     = local.rendered_manifest
-    crds_version = var.gateway_api_crds_version
+    cluster_name     = aws_eks_cluster.this.name
+    region           = var.aws_region
+    manifest         = local.rendered_manifest
+    gateway_manifest = local.rendered_gateway
+    crds_version     = var.gateway_api_crds_version
   }
 
   triggers_replace = [local.rendered_manifest]
@@ -388,9 +395,11 @@ EOT
     when        = destroy
     interpreter = ["bash", "-c"]
     command     = <<EOT
-aws eks update-kubeconfig --name ${self.input.cluster_name} --region ${self.input.region}
-cat <<'MANIFEST' | kubectl delete -f - || true
-${self.input.manifest}
+set -uo pipefail
+aws eks update-kubeconfig --name ${self.input.cluster_name} --region ${self.input.region} || true
+# Delete only the controller-finalized GatewayClass/Gateway/HTTPRoute
+cat <<'MANIFEST' | kubectl delete -f - --ignore-not-found --timeout=300s || true
+${self.input.gateway_manifest}
 MANIFEST
 EOT
   }
