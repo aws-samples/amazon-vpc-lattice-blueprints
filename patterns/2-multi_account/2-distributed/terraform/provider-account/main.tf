@@ -8,6 +8,21 @@ data "aws_organizations_organization" "org" {}
 
 data "aws_caller_identity" "current" {}
 
+# Open (allow-all) auth policy.
+locals {
+  auth_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "*"
+        Effect    = "Allow"
+        Principal = "*"
+        Resource  = "*"
+      }
+    ]
+  })
+}
+
 # ---------- LAMBDA TARGET ----------
 # AWS Lambda function (service target - returns a JSON greeting)
 resource "aws_lambda_function" "lambda" {
@@ -56,8 +71,9 @@ module "vpclattice_lambda_service" {
 
   services = {
     lambdaservice = {
-      name      = "lambda-service-${var.identifier}"
-      auth_type = "NONE"
+      name        = "lambda-service-${var.identifier}"
+      auth_type   = "AWS_IAM"
+      auth_policy = local.auth_policy
 
       listeners = {
         https = {

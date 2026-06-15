@@ -17,6 +17,19 @@ data "aws_ram_resource_share" "provider" {
 locals {
   shared_service_arns        = [for arn in data.aws_ram_resource_share.provider.resource_arns : arn if length(regexall(":service/", arn)) > 0]
   shared_resource_config_arn = [for arn in data.aws_ram_resource_share.provider.resource_arns : arn if length(regexall(":resourceconfiguration/", arn)) > 0][0]
+
+  # Open (allow-all) auth policy.
+  auth_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "*"
+        Effect    = "Allow"
+        Principal = "*"
+        Resource  = "*"
+      }
+    ]
+  })
 }
 
 # ---------- AMAZON VPC LATTICE (SERVICE NETWORK) ----------
@@ -26,8 +39,9 @@ module "vpclattice_service_network" {
   version = "= 1.1.0"
 
   service_network = {
-    name      = "service-network-${var.identifier}"
-    auth_type = "NONE"
+    name        = "service-network-${var.identifier}"
+    auth_type   = "AWS_IAM"
+    auth_policy = local.auth_policy
   }
 
   ram_share = {

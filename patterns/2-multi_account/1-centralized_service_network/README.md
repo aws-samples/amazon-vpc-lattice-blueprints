@@ -30,7 +30,7 @@ From a consumer EC2 instance, the **service** DNS name resolves to a VPC Lattice
 | Aspect | Configuration |
 |--------|---------------|
 | **Service network** | `AWS_IAM` auth with a permissive (allow-all) auth policy; owned by the network account |
-| **Service** | HTTPS listener on port 443, `NONE` auth, 100% forward to the Lambda target group |
+| **Service** | HTTPS listener on port 443, `AWS_IAM` auth with an open (allow-all) policy, 100% forward to the Lambda target group |
 | **Service target** | AWS Lambda function (returns a JSON greeting) |
 | **Resource configuration** | `ARN` type → Aurora cluster, fronted by a dual-stack resource gateway in the provider VPC |
 | **Custom domain name** | ❌ No (service uses the VPC Lattice-generated FQDN; Aurora uses its RDS endpoint) |
@@ -120,5 +120,5 @@ After successfully deploying this pattern:
 
 1. **Test connectivity**: Follow the testing guide above to verify cross-account connectivity.
 2. **Try the other model**: Compare with [Distributed Service Networks](../2-distributed/), where consumers own their networks.
-3. **Add access control**: See the [Auth Policies & SigV4](../../4-auth_policies/) pattern to gate the shared service by IAM identity.
+3. **Restrict access**: The shared service already uses `AWS_IAM` auth with an open policy. See the [Auth Policies & SigV4 toolkit](../../4-auth_policies/) to swap in a restrictive policy and sign requests with SigV4.
 4. **Custom domains**: Add Route 53 private hosted zones + ACM certificates using the [VPC Lattice DNS Guidance](https://aws.amazon.com/solutions/guidance/amazon-vpc-lattice-automated-dns-configuration-on-aws/).

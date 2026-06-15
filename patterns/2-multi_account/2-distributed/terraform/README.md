@@ -114,7 +114,7 @@ This pattern enables VPC Lattice **access logging** by default in both accounts,
   aws logs tail /aws/vpclattice/<identifier> --follow
   ```
 
-- **How to interpret them**: each entry records one request (source, target, response code, timing) — useful for observability and, because both the service network and service use `AWS_IAM`/`NONE` auth respectively, for confirming routing and auth allow/deny decisions.
+- **How to interpret them**: each entry records one request (source, target, response code, timing) — useful for observability and, because both the service network and service use `AWS_IAM` auth, for confirming auth allow/deny decisions.
 
 > **Cost note**: Access logging uses CloudWatch Logs vended-logs pricing (ingestion + storage). This pattern creates a log group in each account, so the cost applies in both — a small ongoing cost while the pattern is deployed.
 

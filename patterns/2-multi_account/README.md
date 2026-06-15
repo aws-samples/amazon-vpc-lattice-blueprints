@@ -38,4 +38,4 @@ Both patterns share the same building blocks so the comparison stays focused on 
 After exploring these multi-account architectures:
 
 1. **[Advanced Architectures](../3-advanced_architectures/)** - Centralize VPC endpoints across VPCs
-2. **[Auth Policies & SigV4](../4-auth_policies/)** - Add identity-based access control to shared services
+2. **[Auth Policies & SigV4](../4-auth_policies/)** - Reference toolkit for adding identity-based access control to the shared service
