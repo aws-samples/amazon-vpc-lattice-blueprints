@@ -3,13 +3,9 @@
 
 # Repository Conventions
 
-This document is the contract that **every published pattern** in this repository
-follows. New patterns and changes to existing patterns must conform to it. It is the
-authoritative, concise reference for naming, layout, dependency versions, license
-headers, access logging, DNS facts, and CloudFormation/Terraform parity.
+This document is the contract that **every published pattern** in this repository follows. New patterns and changes to existing patterns must conform to it. It is the authoritative, concise reference for naming, layout, dependency versions, license headers, access logging, DNS facts, and CloudFormation/Terraform parity.
 
-> If you are adding or modifying a pattern, read this file first. CI and the local
-> pre-commit hooks enforce much of it automatically.
+> If you are adding or modifying a pattern, read this file first. CI and the local pre-commit hooks enforce much of it automatically.
 
 ---
 
@@ -30,11 +26,9 @@ Examples:
 |----------|------|
 | Service network | `service-network-${var.identifier}` |
 | Resource gateway | `resource-gateway-${var.identifier}` |
-| Resource configuration | `resource-configuration-${var.identifier}` |
+| Resource configuration | `resource-config-${var.identifier}` |
 
-Do **not** use abbreviated, suffix-first outliers. Normalize legacy names such as
-`${var.identifier}-rgw` → `resource-gateway-${var.identifier}` and
-`${var.identifier}-rcg` → `resource-configuration-${var.identifier}`.
+Use **full, readable words**, hyphen-separated, with the `identifier` suffix last. A short, well-understood abbreviation is acceptable **only** where the full word would push a name past a service limit — specifically **`resource-config`** for resource configurations, because VPC Lattice caps a resource configuration `Name` at **40 characters** and per-endpoint names such as `resource-config-<endpoint>-${var.identifier}` would otherwise overflow. Do **not** use cryptic or suffix-first outliers such as `rcg-`, `rgw-`, or `${var.identifier}-rgw`; normalize those to the full form (e.g. `resource-gateway-${var.identifier}`).
 
 **Security groups** use the pattern:
 
@@ -48,8 +42,7 @@ e.g. `consumer-vpc-instance-security-group-${var.identifier}`.
 
 ## 2. Directory layout
 
-Each pattern provides both IaC implementations side by side (see the parity policy in
-section 7 for the EKS exception):
+Each pattern provides both IaC implementations side by side (see the parity policy in section 7 for the EKS exception):
 
 ```
 patterns/<category>/<pattern>/
@@ -68,20 +61,15 @@ patterns/<category>/<pattern>/
 
 Notes:
 
-- The `terraform/README.md` is **generated** from `.header.md` plus the module's
-  inputs/outputs. Edit `.header.md`, then regenerate — never edit the README by hand.
-- The terraform-docs configuration is shared at the repo root:
-  `.config/.terraform-docs.yaml` (`formatter: markdown`, `header-from: .header.md`,
-  `output.file: "README.md"`).
-- Shared Terraform modules live **only** in `patterns/tf_modules/`. Do not introduce a
-  second shared-module root.
+- The `terraform/README.md` is **generated** from `.header.md` plus the module's inputs/outputs. Edit `.header.md`, then regenerate — never edit the README by hand.
+- The terraform-docs configuration is shared at the repo root: `.config/.terraform-docs.yaml` (`formatter: markdown`, `header-from: .header.md`, `output.file: "README.md"`).
+- Shared Terraform modules live **only** in `patterns/tf_modules/`. Do not introduce a second shared-module root.
 
 ---
 
 ## 3. Version pins
 
-A single pinned set is applied to every pattern. **Modules are exact-pinned with `=`;
-providers use a single floor `>=`.** The Lambda runtime is an exact identifier string.
+A single pinned set is applied to every pattern. **Modules are exact-pinned with `=`; providers use a single floor `>=`.** The Lambda runtime is an exact identifier string.
 
 | Dependency | Pin | Form |
 |------------|-----|------|
@@ -93,14 +81,10 @@ providers use a single floor `>=`.** The Lambda runtime is an exact identifier s
 
 Conventions:
 
-- **Modules → exact pin** with an explicit `=` operator (e.g. `version = "= 4.7.3"`),
-  making the exact-pin intent unambiguous.
-- **Providers → single floor** (`>= x.y.z`). Raise all patterns to the agreed floor;
-  never lower it.
-- Terraform core: `required_version = ">= 1.3.0"` is uniform across every
-  `providers.tf` and is left unchanged.
-- The rule for choosing a value is "highest currently-used stable value, applied
-  uniformly." `python3.14` is a GA AWS Lambda managed runtime.
+- **Modules → exact pin** with an explicit `=` operator (e.g. `version = "= 4.7.3"`), making the exact-pin intent unambiguous.
+- **Providers → single floor** (`>= x.y.z`). Raise all patterns to the agreed floor; never lower it.
+- Terraform core: `required_version = ">= 1.3.0"` is uniform across every `providers.tf` and is left unchanged — **except EKS**, which uses `>= 1.4.0` because it relies on the `terraform_data` resource (Terraform 1.4+).
+- The rule for choosing a value is "highest currently-used stable value, applied uniformly." `python3.14` is a GA AWS Lambda managed runtime.
 
 ---
 
@@ -115,64 +99,74 @@ Every IaC source file carries the `MIT-0` copyright header at the very top.
  SPDX-License-Identifier: MIT-0 */
 ```
 
-**CloudFormation / YAML (`*.yaml`)** — hash comment lines before
-`AWSTemplateFormatVersion`:
+**CloudFormation / YAML (`*.yaml`)** — hash comment lines before `AWSTemplateFormatVersion`:
 
 ```yaml
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 ```
 
-For any other comment-supporting source file, use the equivalent comment syntax for
-that language with the same two lines.
+For any other comment-supporting source file, use the equivalent comment syntax for that language with the same two lines.
 
 ---
 
 ## 5. Access-logging standard
 
-Every pattern that creates a service network and/or service **enables an access log
-subscription by default**.
+Every pattern that creates a service network and/or service **enables an access log subscription by default**.
 
-- **Destination:** a CloudWatch Logs log group named `/aws/vpclattice/<identifier>`
-  (one log group per pattern; simplest to inspect). Amazon S3 is a documented
-  alternative destination.
+- **Destination:** a CloudWatch Logs log group named `/aws/vpclattice/<identifier>` (one log group per pattern; simplest to inspect). Amazon S3 is a documented alternative destination.
 - **Mechanism:**
   - Terraform: `aws_vpclattice_access_log_subscription`
   - CloudFormation: `AWS::VpcLattice::AccessLogSubscription`
-- **Scope:** prefer service-network-level logging where a single-account pattern owns
-  the service network, so one subscription covers the demo. Multi-account patterns log
-  at the level owned by the account that creates the network/service.
-- **Cost:** access logging uses CloudWatch vended-logs pricing — each pattern's docs
-  include a cost note.
-- **Teardown:** the log group is created and destroyed with the pattern; teardown docs
-  mention removing it.
+- **Scope:** prefer service-network-level logging where a single-account pattern owns the service network, so one subscription covers the demo. Multi-account patterns log at the level owned by the account that creates the network/service.
+- **Cost:** access logging uses CloudWatch vended-logs pricing — each pattern's docs include a cost note.
+- **Teardown:** the log group is created and destroyed with the pattern; teardown docs mention removing it.
 
 ---
 
 ## 6. DNS correctness
 
-VPC Lattice answers service DNS with a **link-local** address. State the range
-consistently everywhere:
+VPC Lattice answers DNS with a managed address; the **IPv4 range depends on what is published**. State these consistently everywhere:
 
-- IPv4: **`169.254.171.x/24`**
-- IPv6: **`fd00:ec2:80::/64`**
+- **VPC Lattice services** (HTTP/HTTPS/gRPC — EC2, ASG, Lambda, ECS, EKS): IPv4 **`169.254.171.x/24`** (link-local).
+- **VPC Lattice VPC resources** (resource gateway — e.g. the RDS pattern): IPv4 **`129.224.0.x/17`** (a public range AWS uses for resource connectivity — **not** link-local).
+- **IPv6:** **`fd00:ec2:80::/64`** — for both services and VPC resources.
 
-Do not use any other range in documentation or example output (the earlier
-`129.224.0.x/17` value was incorrect).
+Do not use the link-local (`169.254.171.x/24`) range in the VPC-resources patterns, or the `129.224.0.x/17` range in the service patterns.
 
 ---
 
 ## 7. CloudFormation / Terraform parity policy
 
-All published patterns ship **both** a CloudFormation and a Terraform implementation,
-each meeting the completeness bar — **except EKS, which is Terraform-only**.
+All published **deployable** patterns ship **both** a CloudFormation and a Terraform implementation, each meeting the completeness bar — **except EKS, which is Terraform-only**. EKS is Terraform-only because the AWS Gateway API Controller is installed via Helm and configured through Kubernetes CRDs, which a pure-CloudFormation implementation cannot represent cleanly. The pattern table notes this, and the EKS README includes a short "Why Terraform-only?" explanation.
 
-EKS is Terraform-only because the AWS Gateway API Controller is installed via Helm and
-configured through Kubernetes CRDs, which a pure-CloudFormation implementation cannot
-represent cleanly. The pattern table notes this, and the EKS README includes a short
-"Why Terraform-only?" explanation.
+The **Auth Policies & SigV4** section is the one part of the repository that is **not** a deployable pattern: it is a reference toolkit (auth policy snippets + signing guidance) applied on top of any other pattern, so the parity policy does not apply to it. Its `blueprint.yaml` entry is marked `iac: [Reference]`.
 
 ---
 
-_Requirements covered: R4 (versions/runtimes), R7 (DNS correctness), R8 (parity),
-R9 (access logging), R11 (naming, layout, headers)._
+## 8. Security-scan baseline & suppression mechanism
+
+CI runs [Checkov](https://www.checkov.io/) over `patterns/` using the committed [`.checkov.yaml`](.checkov.yaml) baseline at the repo root. These blueprints are intentionally minimal teaching examples, so some findings map to deliberate demo simplifications (open egress, the upstream-recommended Gateway API Controller IAM policy, short-lived Aurora without operational hardening, a minimal sample Kubernetes Deployment) or to confirmed false positives (SSH/HTTP ingress that is actually scoped to the EC2 Instance Connect SG or the VPC Lattice managed prefix list).
+
+There are **two ways to suppress a finding**, both supported:
+
+1. **Repo-wide**: add the check ID to the `skip-check` list in `.checkov.yaml`, with a trailing one-line justification comment. Use this for simplifications/false positives that recur across patterns.
+2. **Inline, per-resource**: add a skip comment on the offending resource so the rest of the repo still gets the check:
+   - Terraform: `#checkov:skip=CKV_AWS_123:reason it is safe here`
+   - CloudFormation: `# checkov:skip=CKV_AWS_123:reason it is safe here`
+
+   Always include the `:reason`.
+
+Rules of thumb:
+
+- Suppress **only** deliberate demo simplifications or confirmed false positives; never genuinely security-relevant defaults. Encryption-at-rest, IMDSv2, and encrypted EBS root volumes must stay enforced.
+- Every suppression carries a justification (comment or `:reason`).
+- The baseline is **expected to evolve**: entries are added/removed as findings are triaged and patterns change. The `.checkov.yaml` header comment is the authoritative reference for the current set and the rationale behind each skip.
+
+---
+
+## 9. Keeping SKILLS.md in sync
+
+[`SKILLS.md`](SKILLS.md) at the repo root is an **agent-facing skill file**; it teaches an AI agent what VPC Lattice is and how to use this blueprint. To stay portable (so it can be lifted into another agent's context), it **intentionally restates** a handful of facts that are authoritative here, including the **version pins** (section 3), the **DNS ranges** (section 6), the **parity policy** (section 7), and the **secure-default** expectations (section 8).
+
+Because those facts are duplicated, **when you change any of them in this file you MUST update the matching value in `SKILLS.md`.** This file (`CONVENTIONS.md`) and [`blueprint.yaml`](blueprint.yaml) remain the sources of truth; `SKILLS.md` is a derived summary that must not drift from them.
