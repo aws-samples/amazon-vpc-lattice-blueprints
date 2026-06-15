@@ -15,7 +15,7 @@ resource "aws_vpclattice_resource_gateway" "resource_gateway" {
 
 # Resource configuration
 resource "aws_vpclattice_resource_configuration" "resource_configuration" {
-  name = "resource-configuration-${var.identifier}"
+  name = "resource-config-${var.identifier}"
   type = "ARN"
 
   resource_gateway_identifier = aws_vpclattice_resource_gateway.resource_gateway.id

@@ -238,7 +238,7 @@ Resources:
   ResourceConfiguration:
     Type: AWS::VpcLattice::ResourceConfiguration
     Properties:
-      Name: resource-configuration-rds
+      Name: resource-config-rds
       ResourceConfigurationType: ARN
       ResourceGatewayId: !Ref ResourceGateway
       ResourceConfigurationDefinition:
