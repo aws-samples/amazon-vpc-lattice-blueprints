@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowReadOnlyPublicPath",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "vpc-lattice-svcs:Invoke",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "vpc-lattice-svcs:RequestMethod": "GET"
+        },
+        "StringLike": {
+          "vpc-lattice-svcs:RequestPath": "/public/*"
+        }
+      }
+    }
+  ]
+}

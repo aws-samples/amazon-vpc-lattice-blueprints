@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSpecificOUs",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "vpc-lattice-svcs:Invoke",
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringLike": {
+          "aws:PrincipalOrgPaths": [
+            "o-xxxxxxxxxx/r-xxxx/ou-xxxx-11111111/*",
+            "o-xxxxxxxxxx/r-xxxx/ou-xxxx-22222222/*"
+          ]
+        }
+      }
+    }
+  ]
+}
