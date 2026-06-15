@@ -32,4 +32,4 @@ After mastering these simple architectures, explore:
 
 1. **[Multi-Account Patterns](../2-multi_account/)** - Deploy across multiple AWS accounts
 2. **[Advanced Architectures](../3-advanced_architectures/)** - Check advanced scenarios where VPC Lattice can help your service-to-service communication at scale
-3. **[Auth policies](../4-auth_policies/)** - Implement granular control for service-to-service communication 
+3. **[Auth Policies & SigV4](../4-auth_policies/)** - Reference toolkit for adding SigV4 + restrictive auth policies to any pattern

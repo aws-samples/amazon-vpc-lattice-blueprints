@@ -7,8 +7,21 @@ Resources:
   VpcLatticeServiceNetwork:
     Type: AWS::VpcLattice::ServiceNetwork
     Properties:
-      AuthType: NONE
+      AuthType: AWS_IAM
       Name: service-network
+
+  # Open (allow-all) auth policy
+  VpcLatticeServiceNetworkAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeServiceNetwork
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
 
   # ---------- VPC LATTICE ACCESS LOGGING ----------
   # CloudWatch Logs log group (access logs destination)

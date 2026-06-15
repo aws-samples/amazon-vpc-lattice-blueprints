@@ -72,7 +72,7 @@ After deployment, follow the [Testing Connectivity](../README.md#testing-connect
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.27.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.50.0 |
 
 ## Modules
 

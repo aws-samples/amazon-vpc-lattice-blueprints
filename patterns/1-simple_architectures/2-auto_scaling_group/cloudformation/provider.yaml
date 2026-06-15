@@ -30,7 +30,20 @@ Resources:
     Type: AWS::VpcLattice::Service
     Properties:
       Name: !Sub service-${AWS::StackName}
-      AuthType: NONE
+      AuthType: AWS_IAM
+
+  # Open (allow-all) auth policy
+  VpcLatticeServiceAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeService
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
 
   VpcLatticeServiceServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation

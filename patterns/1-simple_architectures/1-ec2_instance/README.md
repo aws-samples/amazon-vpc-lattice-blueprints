@@ -131,6 +131,6 @@ After successfully deploying this pattern:
 
 1. **Test connectivity**: Follow the testing guide above to verify both services work correctly.
 2. **Explore other targets**: Try [Auto Scaling Group](../2-auto_scaling_group/), [Lambda](../3-lambda_function/), [ECS](../4-ecs/), [EKS](../5-eks/), or [RDS / VPC Resources](../6-rds/) patterns.
-3. **Add access control**: See the [Auth Policies & SigV4](../../4-auth_policies/) pattern to gate a service by IAM identity.
+3. **Restrict access**: This pattern already enables `AWS_IAM` auth with an open policy. See the [Auth Policies & SigV4 toolkit](../../4-auth_policies/) to swap in a restrictive policy and sign requests with SigV4.
 4. **Multi-Account**: Move to [Multi-Account patterns](../../2-multi_account/) for cross-account deployments.
 5. **Advanced architectures**: Explore [Advanced patterns](../../3-advanced_architectures/) for more complex scenarios.

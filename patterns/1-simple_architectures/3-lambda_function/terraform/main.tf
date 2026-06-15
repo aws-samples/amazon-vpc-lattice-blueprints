@@ -4,14 +4,30 @@
 # --- patterns/1-simple_architectures/3-lambda_function/terraform/main.tf ---
 
 # ---------- VPC LATTICE RESOURCES ----------
+# Open (allow-all) auth policy
+locals {
+  auth_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "*"
+        Effect    = "Allow"
+        Principal = "*"
+        Resource  = "*"
+      }
+    ]
+  })
+}
+
 # VPC Lattice service network
 module "service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
   version = "= 1.1.0"
 
   service_network = {
-    name      = "service-network-${var.identifier}"
-    auth_type = "NONE"
+    name        = "service-network-${var.identifier}"
+    auth_type   = "AWS_IAM"
+    auth_policy = local.auth_policy
   }
 }
 
@@ -38,8 +54,9 @@ module "service" {
 
   services = {
     service = {
-      name      = "service-${var.identifier}"
-      auth_type = "NONE"
+      name        = "service-${var.identifier}"
+      auth_type   = "AWS_IAM"
+      auth_policy = local.auth_policy
 
       listeners = {
         https = {

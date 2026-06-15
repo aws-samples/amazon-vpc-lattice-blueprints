@@ -12,6 +12,21 @@ data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv6" {
   name = "com.amazonaws.${var.aws_region}.ipv6.vpc-lattice"
 }
 
+# Open (allow-all) auth policy
+locals {
+  auth_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "*"
+        Effect    = "Allow"
+        Principal = "*"
+        Resource  = "*"
+      }
+    ]
+  })
+}
+
 # ---------- VPC LATTICE RESOURCES ----------
 # VPC Lattice service network
 module "service_network" {
@@ -19,8 +34,9 @@ module "service_network" {
   version = "= 1.1.0"
 
   service_network = {
-    name      = "service-network-${var.identifier}"
-    auth_type = "NONE"
+    name        = "service-network-${var.identifier}"
+    auth_type   = "AWS_IAM"
+    auth_policy = local.auth_policy
   }
 }
 
@@ -47,8 +63,9 @@ module "service" {
 
   services = {
     service = {
-      name      = "service-${var.identifier}"
-      auth_type = "NONE"
+      name        = "service-${var.identifier}"
+      auth_type   = "AWS_IAM"
+      auth_policy = local.auth_policy
 
       listeners = {
         https = {

@@ -43,13 +43,29 @@ locals {
 }
 
 # ---------- VPC LATTICE SERVICE NETWORK ----------
+# Open (allow-all) auth policy.
+locals {
+  auth_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "*"
+        Effect    = "Allow"
+        Principal = "*"
+        Resource  = "*"
+      }
+    ]
+  })
+}
+
 module "service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
   version = "= 1.1.0"
 
   service_network = {
-    name      = "service-network-${var.identifier}"
-    auth_type = "NONE"
+    name        = "service-network-${var.identifier}"
+    auth_type   = "AWS_IAM"
+    auth_policy = local.auth_policy
   }
 }
 

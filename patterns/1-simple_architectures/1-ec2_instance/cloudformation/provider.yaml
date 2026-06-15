@@ -46,7 +46,20 @@ Resources:
     Type: AWS::VpcLattice::Service
     Properties:
       Name: !Sub service1-${AWS::StackName}
-      AuthType: NONE
+      AuthType: AWS_IAM
+
+  # Open (allow-all) auth policy
+  VpcLatticeService1AuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeService1
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
 
   VpcLatticeService1ServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
@@ -90,9 +103,22 @@ Resources:
     Type: AWS::VpcLattice::Service
     Properties:
       Name: !Sub service2-${AWS::StackName}
-      AuthType: NONE
+      AuthType: AWS_IAM
       CertificateArn: !Ref Service2CertificateArn
       CustomDomainName: !Ref Service2CustomDomainName
+
+  # Open (allow-all) auth policy.
+  VpcLatticeService2AuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeService2
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
 
   VpcLatticeService2ServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
