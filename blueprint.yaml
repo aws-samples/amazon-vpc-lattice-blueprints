@@ -1,9 +1,9 @@
 name: Amazon VPC Lattice Blueprints
 service: Amazon VPC Lattice
 summary: >
-  A collection of Amazon VPC Lattice patterns implemented using several IaC solutions, 
+  A collection of Amazon VPC Lattice patterns implemented using several IaC solutions,
   demonstrating how to configure and deploy service-to-service communication within AWS
-  in a simplified way. 
+  in a simplified way.
 
 patterns:
   - name: Simple Architectures
@@ -26,31 +26,61 @@ patterns:
       - name: ECS
         description: >
           Amazon ECS tasks as containerized targets.
+      - name: EKS
+        description: >
+          Amazon EKS pods as IP targets via the AWS Gateway API Controller:
+          you author Kubernetes Gateway API resources (GatewayClass, Gateway,
+          HTTPRoute) and the controller provisions the matching VPC Lattice
+          service network, service, and IP target group.
+        iac: [Terraform]
+      - name: RDS / VPC Resources
+        description: >
+          Amazon Aurora (MySQL) consumed as a native TCP resource through a
+          VPC Lattice resource gateway and resource configuration — the VPC
+          Resources model for reaching a database in another VPC over raw TCP.
 
   - name: Multi-AWS Account
     description: >
       Cross-account VPC Lattice deployment using AWS Resource Access
-      Manager (RAM) to share service networks and services.
+      Manager (RAM) to share a service and a resource configuration across
+      accounts. Both sub-patterns expose a Lambda-backed service and an
+      Amazon Aurora resource configuration, and read the database's
+      RDS-managed credentials cross-account from AWS Secrets Manager.
     iac: [CloudFormation, Terraform]
     sub_patterns:
       - name: Centralized Service Network
         description: >
-          Service network owned and shared by a central networking
-          account; participating accounts associate their VPCs and
-          publish services into it.
+          A central networking account owns the service network; a provider
+          account shares a Lambda service and an Aurora resource
+          configuration into it; consumer accounts associate their VPCs to
+          reach both.
       - name: Distributed
         description: >
-          Each account owns and shares its own service network;
-          consumers associate with multiple networks as needed.
+          A provider account shares a Lambda service and an Aurora resource
+          configuration; each consumer account owns its own service network
+          and associates the shared service and resource configuration to it.
 
   - name: Advanced Architectures
     description: >
-      Complex architectures including hybrid connectivity, cross-region
-      patterns, and advanced connectivity scenarios beyond the
-      single-account fundamentals.
+      Advanced VPC Lattice connectivity scenarios beyond the single-account
+      fundamentals.
     iac: [CloudFormation, Terraform]
     sub_patterns:
       - name: Centralized VPC Endpoints
         description: >
-          Sharing VPC endpoints across accounts via VPC Lattice, avoiding
-          per-account interface endpoint duplication.
+          Centralize interface VPC endpoints in a shared VPC and reach them
+          from consumer VPCs through VPC Lattice VPC Resources, avoiding
+          per-VPC interface endpoint duplication.
+
+  - name: Auth Policies & SigV4
+    description: >
+      Reference toolkit (not a deployable pattern) for identity-based access
+      control: how to SigV4-sign requests from a consumer and a cookbook of auth
+      policies for common use cases. Every service-exposing pattern ships its
+      service networks and services with AWS_IAM auth and an open (allow-all)
+      policy, so they are auth-ready - swap in a restrictive policy from this
+      section to enforce access control. The resource-only patterns (RDS / VPC
+      Resources and Centralized VPC Endpoints) keep NONE, since auth policies
+      apply to services, not to VPC resources. Auth decisions are recorded in
+      access logs.
+    iac: [Reference]
