@@ -11,6 +11,18 @@ Resources:
       AuthType: NONE
       Name: service-network
 
+  VpcLatticeServiceAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
+    Properties:
+      ServiceIdentifier: !GetAtt GetRAMResourceShare.VpcLatticeService
+      ServiceNetworkIdentifier: !Ref VpcLatticeServiceNetwork
+
+  VpcLatticeResourceAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkResourceAssociation
+    Properties:
+      ResourceConfigurationId: !GetAtt GetRAMResourceShare.ResourceConfiguration
+      ServiceNetworkId: !Ref VpcLatticeServiceNetwork
+
   # ---------- VPC LATTICE ACCESS LOGGING ----------
   # CloudWatch Logs log group (access logs destination)
   VpcLatticeAccessLogs:
@@ -26,21 +38,15 @@ Resources:
       ResourceIdentifier: !Ref VpcLatticeServiceNetwork
       DestinationArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${VpcLatticeAccessLogs}'
 
-  VpcLatticeServiceAssociation:
-    Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
-    Properties:
-      ServiceIdentifier: !GetAtt GetRAMResourceShare.VpcLatticeService
-      ServiceNetworkIdentifier: !Ref VpcLatticeServiceNetwork
-  
   # ---------- RAM SHARE VPC LATTICE SERVICE NETWORK (AWS ORGANIZATION) ---------
   RAMShare:
     Type: AWS::RAM::ResourceShare
     Properties:
       AllowExternalPrincipals: false
       Name: service-network-resource-share
-      Principals: 
+      Principals:
         - !GetAtt GetOrganizationId.OrganizationArn
-      ResourceArns: 
+      ResourceArns:
         - !GetAtt VpcLatticeServiceNetwork.Arn
 
   # ---------- CUSTOM RESOURCE: GET ORGANIZATION ID ----------
@@ -60,18 +66,18 @@ Resources:
         ZipFile: |
           import boto3
           import cfnresponse
-          
+
           def handler(event, context):
               try:
                   if event['RequestType'] == 'Delete':
                       cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
                       return
-                  
+
                   org_client = boto3.client('organizations')
                   response = org_client.describe_organization()
                   org_id = response['Organization']['Id']
                   org_arn = response['Organization']['Arn']
-                  
+
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
                       'OrganizationId': org_id,
                       'OrganizationArn': org_arn
@@ -107,7 +113,7 @@ Resources:
     Type: Custom::GetRAMResourceShare
     Properties:
       ServiceToken: !GetAtt GetRAMShareFunction.Arn
-      ShareName: service-resource-share
+      ShareName: provider-resource-share
 
   GetRAMShareFunction:
     Type: AWS::Lambda::Function
@@ -120,44 +126,51 @@ Resources:
         ZipFile: |
           import boto3
           import cfnresponse
-          
+
           def handler(event, context):
               try:
                   if event['RequestType'] == 'Delete':
                       cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
                       return
-                  
+
                   share_name = event['ResourceProperties']['ShareName']
                   ram_client = boto3.client('ram')
-                  
+
                   # Get resource shares shared WITH this account
                   response = ram_client.get_resource_shares(
                       resourceOwner='OTHER-ACCOUNTS',
                       name=share_name
                   )
-                  
+
                   if not response['resourceShares']:
-                      cfnresponse.send(event, context, cfnresponse.FAILED, 
+                      cfnresponse.send(event, context, cfnresponse.FAILED,
                                      {'Error': f'No resource share found with name: {share_name}'})
                       return
-                  
+
                   share = response['resourceShares'][0]
-                  
+
                   # Get associated resources
                   resources_response = ram_client.list_resources(
                       resourceOwner='OTHER-ACCOUNTS',
                       resourceShareArns=[share['resourceShareArn']]
                   )
-                  
+
                   resource_arns = [r['arn'] for r in resources_response.get('resources', [])]
-                  
+
+                  # The single provider share contains both the service and the resource configuration.
+                  service_arn = next((a for a in resource_arns if ':service/' in a), '')
+                  resource_config_arn = next((a for a in resource_arns if ':resourceconfiguration/' in a), '')
+                  # ServiceNetworkResourceAssociation requires the resource config ID (rcfg-...), not the ARN.
+                  resource_config_id = resource_config_arn.split('/')[-1] if resource_config_arn else ''
+
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
                       'ResourceShareArn': share['resourceShareArn'],
                       'ResourceShareName': share['name'],
                       'Status': share['status'],
                       'OwningAccountId': share['owningAccountId'],
                       'ResourceArns': ','.join(resource_arns),
-                      'VpcLatticeService': resource_arns[0] if resource_arns else ''
+                      'VpcLatticeService': service_arn,
+                      'ResourceConfiguration': resource_config_id
                   })
               except Exception as e:
                   print(f"Error: {str(e)}")
