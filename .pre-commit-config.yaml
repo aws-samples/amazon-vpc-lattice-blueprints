@@ -1,0 +1,163 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# =============================================================================
+# Local pre-commit configuration for Amazon VPC Lattice Blueprints
+# =============================================================================
+#
+# This file lets contributors run the SAME static checks locally that the CI
+# workflow (.github/workflows/ci.yml) runs on every pull request, so issues can
+# be fixed before pushing instead of round-tripping through CI.
+#
+# Install and run (documented fully in CONTRIBUTING.md):
+#   pip install pre-commit
+#   pre-commit install
+#   pre-commit run --all-files
+#
+# Required local tools (the hooks shell out to these — see CONTRIBUTING.md for
+# install guidance and versions): terraform, tflint, terraform-docs, and lychee.
+# cfn-lint and checkov are installed automatically by pre-commit into isolated
+# hook environments from the pinned revs below.
+#
+# CI <-> pre-commit lockstep: the checks, tools, and pinned versions here are
+# kept in step with .github/workflows/ci.yml. A change to one MUST be mirrored
+# in the other.
+#
+# All hook repo revs are pinned to specific tags for reproducibility.
+# =============================================================================
+
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  # ---------------------------------------------------------------------------
+  # Terraform hooks (community antonbabenko/pre-commit-terraform).
+  #
+  # Mirrors the CI jobs: `fmt`, `terraform-checks` (init -backend=false +
+  # validate), `tflint`, and `terraform-docs` drift.
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.99.0
+    hooks:
+      # terraform fmt -> mirrors CI `terraform fmt -check -recursive`.
+      - id: terraform_fmt
+
+      # terraform validate -> mirrors CI per-pattern validate.
+      #
+      # STATIC by design: this hook runs `terraform init -backend=false`
+      # (via the bundled hooks/_common.sh `common::terraform_init`, which always
+      # passes `-backend=false`) before `terraform validate`. No remote state
+      # backend is configured and no AWS credentials are read or required, so it
+      # behaves exactly like the credential-free CI validate. The EKS pattern's
+      # helm / kubernetes / kubectl providers validate statically this way too —
+      # no live cluster is contacted.
+      - id: terraform_validate
+
+      # tflint with the repo AWS ruleset -> mirrors CI `tflint --config .tflint.hcl`.
+      # __GIT_WORKING_DIR__ is replaced by pre-commit-terraform with the repo
+      # root so every pattern dir is linted against the same shared .tflint.hcl.
+      - id: terraform_tflint
+        args:
+          - "--args=--config=__GIT_WORKING_DIR__/.tflint.hcl"
+
+      # terraform-docs drift -> mirrors CI `terraform-docs --config ...`.
+      # Uses the shared config so generated per-pattern READMEs stay in sync
+      # with their .header.md + variables/outputs.
+      - id: terraform_docs
+        args:
+          - "--args=--config=.config/.terraform-docs.yaml"
+
+  # ---------------------------------------------------------------------------
+  # cfn-lint (official AWS CloudFormation linter hook).
+  #
+  # Pinned to v1.51.4 to stay in lockstep with CI (`pip install cfn-lint==1.51.4`).
+  # Scoped to CloudFormation templates only. cfn-lint v1.x natively understands
+  # the `AWS::LanguageExtensions` transform and the `!Ref`/`!Sub`/`!GetAtt`/
+  # `Fn::ForEach` intrinsics used by these templates. The v1.51.4 spec recognizes
+  # the GA `python3.14` Lambda runtime (the deliberate repo-wide pin), the newer
+  # EC2 / VPC-endpoint properties these
+  # templates use (e.g. EgressOnlyInternetGateway Tags, VPC endpoint DnsOptions /
+  # PrivateDnsEnabled / IpAddressType, instance MetadataOptions), and the VPC
+  # Lattice resource gateway `ResourceConfigDnsResolution` property (centralized
+  # VPC endpoints pattern); older specs reported these as stale-spec false positives.
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/aws-cloudformation/cfn-lint
+    rev: v1.51.4
+    hooks:
+      - id: cfn-lint
+        files: ^patterns/.*/cloudformation/.*\.(yaml|yml)$
+
+  # ---------------------------------------------------------------------------
+  # checkov (static IaC security scan) -> mirrors CI `checkov` job.
+  #
+  # The default hook entry is `checkov -d .`; we override the entry to drop the
+  # `-d .` so that scope and framework selection come entirely from the
+  # committed `.checkov.yaml` baseline (which sets `directory: [patterns]` and
+  # `framework: [terraform, cloudformation]`). This makes the local scan
+  # identical to CI, which runs with `config_file: .checkov.yaml`.
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: "3.2.530"
+    hooks:
+      - id: checkov
+        entry: checkov
+        args:
+          - "--config-file"
+          - ".checkov.yaml"
+        # Trigger on Terraform and CloudFormation changes (the config file
+        # decides what is actually scanned). pass_filenames stays false (hook
+        # default) so the baseline's directory scope is authoritative.
+        files: (\.tf$|^patterns/.*/cloudformation/.*\.(yaml|yml)$)
+        exclude: \.terraform/.*$
+
+  # ---------------------------------------------------------------------------
+  # Markdown link check -> mirrors CI `markdown-links` job (lychee).
+  #
+  # Implemented as a `repo: local` hook shelling out to lychee so the SAME tool
+  # and the SAME leniency flags as CI are used (CI uses lycheeverse/lychee-action).
+  # lychee must be installed locally (documented in CONTRIBUTING.md).
+  # Leniency on external links mirrors CI: transient/rate-limited responses
+  # (and 206 partial content) are accepted so external flakiness does not block
+  # a commit, while genuinely broken links still fail.
+  # ---------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: lychee
+        name: Markdown link check (lychee)
+        description: Check links in markdown files using lychee (mirrors CI). Requires lychee installed locally.
+        entry: lychee
+        language: system
+        types: [markdown]
+        exclude: \.terraform/.*$
+        args:
+          - "--no-progress"
+          - "--max-retries"
+          - "2"
+          - "--accept"
+          - "200,206,429"
+
+  # ---------------------------------------------------------------------------
+  # General hygiene hooks (pre-commit/pre-commit-hooks).
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+        exclude: \.terraform/.*$
+      - id: trailing-whitespace
+        exclude: \.terraform/.*$
+      - id: check-merge-conflict
+
+      # check-yaml validates YAML well-formedness. Its safe loader CANNOT parse
+      # CloudFormation intrinsic short tags (`!Ref`, `!Sub`, `!GetAtt`) or the
+      # `Fn::ForEach`/`AWS::LanguageExtensions` constructs used by the templates
+      # under patterns/**/cloudformation/, so those are EXCLUDED here to avoid
+      # false failures. The CloudFormation templates are still fully validated
+      # (including YAML structure) by the cfn-lint hook above, which understands
+      # those tags natively. All other YAML in the repo is still checked.
+      # `--allow-multiple-documents` lets multi-document Kubernetes manifests
+      # (e.g. the EKS pattern's `kubernetes/*.yaml`, which use `---` separators)
+      # be validated rather than excluded.
+      - id: check-yaml
+        args:
+          - "--allow-multiple-documents"
+        exclude: ^patterns/.*/cloudformation/.*\.(yaml|yml)$

@@ -1,0 +1,207 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# =============================================================================
+# Checkov baseline for Amazon VPC Lattice Blueprints
+# =============================================================================
+#
+# This is the committed, tunable Checkov baseline referenced by CI
+# (.github/workflows/ci.yml -> `checkov` job, `config_file: .checkov.yaml`) and
+# by the local pre-commit hooks. It provides a security scan with a tuned
+# baseline and documented suppressions for intentional demo simplifications; the
+# baseline is expected to evolve and the suppression mechanism is documented below.
+#
+# These blueprints are intentionally MINIMAL teaching examples. Their purpose is
+# to demonstrate Amazon VPC Lattice connectivity, sharing, auth, and
+# observability — NOT to be a production-hardened reference. A number of Checkov
+# findings therefore correspond to deliberate demo simplifications (open egress,
+# the upstream-recommended controller IAM policy, short-lived Aurora without
+# operational hardening, a minimal sample Kubernetes Deployment, etc.). Those are
+# suppressed below, each with a one-line justification.
+#
+# -----------------------------------------------------------------------------
+# HOW SUPPRESSION WORKS (two mechanisms — both documented, both supported)
+# -----------------------------------------------------------------------------
+#
+# 1. Repo-wide baseline (this file) — the `skip-check` list below. Add a check
+#    ID here when a finding is a deliberate, repo-wide demo simplification or a
+#    confirmed false positive that affects many patterns. Always add a trailing
+#    `# CKV_...  <one-line justification>` comment so the intent is reviewable.
+#
+# 2. Inline, per-resource — add a comment directly on the offending resource:
+#       Terraform:        #checkov:skip=CKV_AWS_123:reason it is safe here
+#       CloudFormation:   # checkov:skip=CKV_AWS_123:reason it is safe here
+#    Prefer inline skips when the suppression is specific to ONE resource so the
+#    rest of the repo still gets the check. Always include the `:reason`.
+#
+# -----------------------------------------------------------------------------
+# THIS BASELINE IS EXPECTED TO EVOLVE
+# -----------------------------------------------------------------------------
+# Triage each live finding and decide, per check, "fix the code" vs "suppress
+# with justification". As patterns change or new ones are added, entries may be
+# added or removed. Two rules keep it honest:
+#   * Skip ONLY deliberate demo simplifications or confirmed false positives —
+#     never genuinely security-relevant defaults.
+#   * Every skipped ID carries a justification comment.
+#
+# Genuinely security-relevant findings are deliberately NOT suppressed so they
+# stay visible for triage — see the "INTENTIONALLY NOT SKIPPED" note at the end.
+# =============================================================================
+
+# Scope the scan to the IaC this repository actually ships. (Embedded Kubernetes
+# manifests in the EKS Terraform are still evaluated via the terraform graph, so
+# the CKV_K8S_* demo-app skips below are still required.)
+framework:
+  - terraform
+  - cloudformation
+
+# Directory to scan. Mirrors the `directory: patterns` input in the CI workflow;
+# stated here so local `checkov --config-file .checkov.yaml` behaves identically.
+directory:
+  - patterns
+
+# Concise output for CI logs.
+compact: true
+quiet: true
+
+# Note on pass/fail: the CI `checkov` job currently runs with `soft_fail: true`
+# (findings reported but non-blocking). That toggle lives in the workflow, not
+# here, so this baseline stays the single source of truth for WHAT is suppressed
+# regardless of blocking mode.
+#
+# Note on CloudFormation coverage: several templates build per-AZ resources with
+# the `AWS::LanguageExtensions` `Fn::ForEach` macro and reference the generated
+# logical IDs dynamically (e.g. `!Ref { "Fn::Sub": "WorkloadRouteTable${AZ}" }`).
+# Checkov's CloudFormation parser does not understand an intrinsic function as
+# the argument to `Ref`, so it reports those files as "parsing errors" and does
+# not scan them. This is a Checkov parser limitation, not a template defect:
+# cfn-lint (which natively supports LanguageExtensions) validates these templates
+# in full, and Checkov still scans the Terraform equivalents of the same resources.
+
+skip-check:
+  # ---------------------------------------------------------------------------
+  # Confirmed FALSE POSITIVES — the rule does not understand VPC Lattice / EIC
+  # scoping. These ingress rules are NOT world-open.
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_24   # "SSH open to 0.0.0.0/0" — actually restricted to the EC2 Instance Connect SG (referenced_security_group_id), not the internet.
+  - CKV_AWS_260  # "HTTP(80) open to 0.0.0.0/0" — actually restricted to the VPC Lattice managed prefix list, not the internet.
+
+  # CKV2_AWS_5 "SG attached to another resource" — FALSE POSITIVE for the
+  # VPC Lattice association SGs (aws_security_group.vpc(_)lattice_sg). Each is
+  # attached to the VPC Lattice service-network VPC association via the
+  # aws-ia/amazon-vpc-lattice-module `security_group_ids` input (a module
+  # argument), an attachment Checkov's terraform graph does not trace, so the
+  # SG is reported as unattached when it is in fact in use.
+  - CKV2_AWS_5
+
+  # ---------------------------------------------------------------------------
+  # Deliberate demo simplification: OPEN EGRESS.
+  # The patterns intentionally allow all egress (0.0.0.0/0 and ::/0) so demos
+  # can pull packages/images without extra plumbing.
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_382  # Allow-all egress is an intentional demo simplification (documented in CONVENTIONS.md / pattern docs).
+
+  # ---------------------------------------------------------------------------
+  # Module pinning convention (not a security finding).
+  # ---------------------------------------------------------------------------
+  - CKV_TF_1     # Modules are pinned to exact Terraform Registry versions (e.g. = 4.7.3) per CONVENTIONS.md, not git commit hashes; commit-hash pinning is N/A to registry modules.
+
+  # ---------------------------------------------------------------------------
+  # Security-group rule documentation hygiene (cosmetic, not security).
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_23   # Demo SG rules omit free-text descriptions for brevity; rule intent is clear from the resource name.
+
+  # ---------------------------------------------------------------------------
+  # Demo Lambda simplifications (the function is the Lattice target; extra
+  # production wiring would obscure the connectivity lesson).
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_115  # No per-function reserved concurrency — not relevant to a demo.
+  - CKV_AWS_116  # No Dead Letter Queue — not relevant to a demo.
+  - CKV_AWS_117  # Lambda not VPC-attached — kept simple; it is the Lattice service target.
+  - CKV_AWS_50   # X-Ray tracing not enabled — out of scope for these demos.
+  - CKV_AWS_272  # Code-signing not configured — out of scope for these demos.
+
+  # ---------------------------------------------------------------------------
+  # Demo EC2 simplifications.
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_126  # Detailed monitoring off — avoids demo cost; IMDSv2 + encrypted root volumes ARE enforced.
+  - CKV_AWS_135  # EBS optimization not set — demos use small/default instance types.
+  - CKV2_AWS_41  # No IAM instance profile attached to the demo EC2 instances — they are simple httpd/consumer targets that need no AWS API access; IMDSv2 is still required. Attaching an empty role would add noise without a security benefit for the demo.
+
+  # ---------------------------------------------------------------------------
+  # Demo CloudWatch Logs (VPC Lattice access-log groups).
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_158  # Access-log groups use default CloudWatch Logs encryption rather than a customer-managed KMS CMK (demo simplicity).
+  - CKV_AWS_338  # Short/default log retention to control demo cost (not the >= 1 year production target).
+
+  # ---------------------------------------------------------------------------
+  # Demo ECR / ECS sample app.
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_51   # ECR image tags mutable — fine for a throwaway demo repository.
+  - CKV_AWS_136  # ECR uses default (AES256) encryption rather than a KMS CMK (demo simplicity).
+  - CKV_AWS_336  # Sample app container is not read-only-root-filesystem — minimal demo workload.
+
+  # ---------------------------------------------------------------------------
+  # Demo-broad IAM: the EKS pattern installs the AWS Gateway API Controller using
+  # the UPSTREAM-RECOMMENDED policy, which uses Resource="*". This breadth is
+  # documented as demo-broad in the EKS pattern.
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_109  # Gateway API Controller policy: permissions-management actions without resource constraints (upstream-recommended policy).
+  - CKV_AWS_111  # Gateway API Controller policy: write actions without resource constraints (upstream-recommended policy).
+  - CKV_AWS_356  # Gateway API Controller policy: Resource="*" for restrictable actions (upstream-recommended policy).
+
+  # ---------------------------------------------------------------------------
+  # Demo Aurora OPERATIONAL hardening: the RDS / VPC Resources pattern provisions
+  # a short-lived cluster meant to be torn down (skip_final_snapshot = true).
+  # Operational/cost features below are intentionally omitted. NOTE: encryption
+  # at rest IS enabled (storage_encrypted = true / StorageEncrypted: true), so
+  # CKV_AWS_96 PASSES and is deliberately NOT skipped — see "INTENTIONALLY NOT
+  # SKIPPED" below.
+  # ---------------------------------------------------------------------------
+  - CKV_AWS_118  # Enhanced monitoring off — avoids demo cost.
+  - CKV_AWS_139  # Deletion protection off — intentional so the demo can be torn down cleanly.
+  - CKV_AWS_162  # IAM DB authentication off — the demo connects using the Secrets Manager managed master password.
+  - CKV_AWS_226  # Auto minor version upgrades not pinned — not relevant to a short-lived demo.
+  - CKV_AWS_313  # Copy-tags-to-snapshots off — demo uses skip_final_snapshot.
+  - CKV_AWS_324  # RDS log capture off — not needed for the connectivity demo.
+  - CKV_AWS_325  # MySQL audit logging off — not needed for the connectivity demo.
+  - CKV_AWS_326  # Aurora backtracking off — not needed for the connectivity demo.
+  - CKV2_AWS_8   # No AWS Backup plan for the Aurora cluster — the demo cluster is short-lived and torn down (skip_final_snapshot = true); a backup plan is operational hardening deliberately out of scope.
+  - CKV_AWS_327  # Aurora is encrypted at rest with the default AWS-managed aws/rds KMS key (storage_encrypted = true); a customer-managed CMK is an operational/cost addition deliberately out of scope for the demo. Encryption-at-rest itself (CKV_AWS_96) PASSES.
+  - CKV_AWS_353  # Performance Insights off — avoids demo cost.
+
+  # ---------------------------------------------------------------------------
+  # EKS sample app: a MINIMAL Kubernetes Deployment whose only job is to be a
+  # reachable target through VPC Lattice. Production pod hardening is out of
+  # scope for the demo workload.
+  # ---------------------------------------------------------------------------
+  - CKV_K8S_8    # No liveness probe on the sample app.
+  - CKV_K8S_9    # No readiness probe on the sample app.
+  - CKV_K8S_10   # No CPU requests on the sample app.
+  - CKV_K8S_11   # No CPU limits on the sample app.
+  - CKV_K8S_12   # No memory limits on the sample app.
+  - CKV_K8S_13   # No memory requests on the sample app.
+  - CKV_K8S_15   # Image pull policy not "Always" on the sample app.
+  - CKV_K8S_28   # NET_RAW capability not dropped on the sample app.
+  - CKV_K8S_29   # No pod-level security context on the sample app.
+  - CKV_K8S_30   # No container-level security context on the sample app.
+  - CKV_K8S_43   # Sample app image referenced by tag, not digest.
+
+# =============================================================================
+# INTENTIONALLY NOT SKIPPED (left visible for triage — do NOT add these to the
+# list above without maintainer sign-off):
+#   * CKV_AWS_96   "Aurora data encrypted at rest"
+# Encryption-at-rest is a genuine security default, not a demo simplification.
+#
+# Triage outcome:
+#   * CKV_AWS_96  — FIXED in code: the RDS pattern now sets
+#       storage_encrypted = true (Terraform) / StorageEncrypted: true
+#       (CloudFormation). This check now PASSES and remains unskipped.
+#   * CKV_AWS_327 — "RDS Clusters encrypted using KMS CMKs". With encryption-at-
+#       rest enabled via the default AWS-managed aws/rds key, this check still
+#       asks for a customer-managed CMK. A CMK is an operational/cost addition
+#       deliberately out of scope for a throwaway demo, so it is now suppressed
+#       with justification in the skip-check list above (the genuine security
+#       default — encryption itself — is satisfied).
+# Encrypted EBS root volumes and IMDSv2 already PASS and must stay that way.
+# =============================================================================
