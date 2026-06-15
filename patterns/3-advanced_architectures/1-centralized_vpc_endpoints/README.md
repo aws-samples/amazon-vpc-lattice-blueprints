@@ -126,4 +126,3 @@ After successfully deploying this pattern:
 2. **Add more endpoints**: Extend the `vpc_endpoints` list to centralize additional AWS services.
 3. **Scale consumers**: Associate more consumer VPCs to share the centralized endpoints.
 4. **Explore other patterns**: Try the [Simple Architectures](../../1-simple_architectures/) target types or [Multi-Account patterns](../../2-multi_account/).
-5. **Add access control**: See the [Auth Policies & SigV4](../../4-auth_policies/) pattern to gate access by IAM identity.

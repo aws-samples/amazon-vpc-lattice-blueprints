@@ -20,4 +20,4 @@ This section demonstrates advanced Amazon VPC Lattice patterns that go beyond st
 
 ## Next Steps
 
-After exploring these advanced architectures, check how to implement granular controls for service-to-service communication - **[Auth Policies & SigV4](../4-auth_policies/)**.
+After exploring these advanced architectures, check the [Auth Policies & SigV4 toolkit](../4-auth_policies/) for adding identity-based access control (SigV4 + restrictive auth policies) to any pattern.

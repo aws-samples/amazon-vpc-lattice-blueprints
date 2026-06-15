@@ -147,7 +147,7 @@ Resources:
       SourceSecurityGroupId: !Ref InstanceSecurityGroup
 
   # ---------- VPC LATTICE SERVICE NETWORK AND ASSOCIATIONS ----------
-  # VPC Lattice Service Network
+  # VPC Lattice service network
   VpcLatticeServiceNetwork:
     Type: AWS::VpcLattice::ServiceNetwork
     Properties:
