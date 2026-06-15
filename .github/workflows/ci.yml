@@ -315,7 +315,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="v0.19.0"
+          version="v0.21.0"
           curl -sSLo /tmp/terraform-docs.tar.gz \
             "https://terraform-docs.io/dl/${version}/terraform-docs-${version}-linux-amd64.tar.gz"
           tar -xzf /tmp/terraform-docs.tar.gz -C /tmp terraform-docs
