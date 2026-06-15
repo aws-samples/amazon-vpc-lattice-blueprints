@@ -6,7 +6,7 @@ This pattern demonstrates the **centralized** multi-account model and shows **bo
 
 <!-- TODO: update centralized.png to include the Aurora resource configuration (resource gateway + Aurora in the provider account). -->
 
-From a consumer EC2 instance, the **service** DNS name resolves to a VPC Lattice **link-local** address (`169.254.171.x/24`) and the **Aurora** endpoint resolves to the VPC Lattice **VPC-resource** range (`129.224.0.x/17`) — IPv6 `fd00:ec2:80::/64` for both. VPC Lattice brokers each request across accounts (to the Lambda target or to Aurora) with no VPC peering, transit gateway, or shared VPC.
+From a consumer EC2 instance, the **service** DNS name resolves to a VPC Lattice **link-local** address (`169.254.171.x/24`) and the **Aurora** endpoint resolves to the VPC Lattice **VPC-resource** range (`129.224.0.x/17`) — IPv6 `fd00:ec2:80::/64` for both.
 
 ## Account structure
 
