@@ -1,0 +1,273 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: Provider VPC, Aurora MySQL cluster, VPC Lattice resource gateway, resource configuration (ARN) and service network association
+Transform: 'AWS::LanguageExtensions'
+
+Parameters:
+  ServiceNetworkId:
+    Type: String
+    Description: VPC Lattice service network ID.
+  DBEngine:
+    Type: String
+    Description: Aurora database engine.
+    Default: aurora-mysql
+  DBEngineVersion:
+    Type: String
+    Description: Aurora database engine version.
+    Default: 8.0.mysql_aurora.3.12.0
+  DBName:
+    Type: String
+    Description: Initial database name.
+    Default: mydb
+  DBPrimaryUsername:
+    Type: String
+    Description: Aurora primary username. The password is managed by RDS in AWS Secrets Manager (no password is defined in this template).
+    Default: admin
+  DBInstanceClass:
+    Type: String
+    Description: Aurora instance class.
+    Default: db.t3.medium
+
+Mappings:
+  SubnetToIndex:
+    RGWa:
+      Index: 0
+    RGWb:
+      Index: 1
+    Databasea:
+      Index: 2
+    Databaseb:
+      Index: 3
+
+Resources:
+  # ---------- VPC ----------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - provider-vpc
+              - !Ref AWS::StackName
+
+  Ipv6Cidr:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      AmazonProvidedIpv6CidrBlock: true
+      VpcId: !Ref VPC
+
+  # For::Each iteration: per subnet type (RGW, Database) and AZ (2 AZs)
+  # Resources to create: 4 subnets, 4 route tables, 4 route table associations - obtaining AZ affinity
+  'Fn::ForEach::SubnetTypes':
+    - SubnetType
+    - [RGW, Database]
+    - '${SubnetType}':
+      'Fn::ForEach::AZ':
+        - AvailabilityZone
+        - [a, b]
+          # Subnets
+        - '${SubnetType}Subnet${AvailabilityZone}':
+            DependsOn:
+              - Ipv6Cidr
+            Type: AWS::EC2::Subnet
+            Properties:
+              VpcId: !Ref VPC
+              AvailabilityZone: !Sub ${AWS::Region}${AvailabilityZone}
+              CidrBlock: !Select
+                - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
+                - !Cidr
+                  - !GetAtt VPC.CidrBlock
+                  - 256
+                  - 8
+              Ipv6CidrBlock: !Select
+                - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
+                - !Cidr
+                  - !Select [0, !GetAtt VPC.Ipv6CidrBlocks]
+                  - 256
+                  - 64
+              AssignIpv6AddressOnCreation: true
+              Tags:
+                - Key: Name
+                  Value: !Join
+                    - '-'
+                    - - !Sub provider-subnet-${SubnetType}-AZ${AvailabilityZone}
+                      - !Ref AWS::StackName
+          # Route Tables
+          '${SubnetType}RouteTable${AvailabilityZone}':
+            Type: AWS::EC2::RouteTable
+            Properties:
+              VpcId: !Ref VPC
+              Tags:
+                - Key: Name
+                  Value: !Join
+                    - '-'
+                    - - !Sub provider-rt-${SubnetType}-AZ${AvailabilityZone}
+                      - !Ref AWS::StackName
+          # Route Table associations
+          '${SubnetType}RouteTableAssociation${AvailabilityZone}':
+            Type: AWS::EC2::SubnetRouteTableAssociation
+            Properties:
+              RouteTableId: !Ref
+                'Fn::Sub': '${SubnetType}RouteTable${AvailabilityZone}'
+              SubnetId: !Ref
+                'Fn::Sub': '${SubnetType}Subnet${AvailabilityZone}'
+
+  # ---------- SECURITY GROUPS ----------
+  # Security Group (Resource Gateway)
+  ResourceGatewaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Resource Gateway Security Group
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub provider-vpc-resource-gateway-security-group-${AWS::StackName}
+
+  ResourceGatewaySecurityGroupEgressDBIPv4:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ResourceGatewaySecurityGroup
+      Description: Allowing MySQL egress to the provider VPC (IPv4)
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      CidrIp: 10.0.0.0/16
+
+  ResourceGatewaySecurityGroupEgressDBIPv6:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ResourceGatewaySecurityGroup
+      Description: Allowing MySQL egress to the provider VPC (IPv6)
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      CidrIpv6: !Select [0, !GetAtt VPC.Ipv6CidrBlocks]
+
+  # Security Group (Aurora)
+  AuroraSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Aurora cluster Security Group
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub provider-vpc-aurora-security-group-${AWS::StackName}
+
+  AuroraSecurityGroupIngressResourceGateway:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AuroraSecurityGroup
+      Description: Allowing MySQL ingress from the resource gateway
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref ResourceGatewaySecurityGroup
+
+  AuroraSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AuroraSecurityGroup
+      Description: Allowing egress traffic (IPv4)
+      IpProtocol: -1
+      CidrIp: 0.0.0.0/0
+
+  AuroraSecurityGroupEgressIPv6:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AuroraSecurityGroup
+      Description: Allowing egress traffic (IPv6)
+      IpProtocol: -1
+      CidrIpv6: ::/0
+
+  # ---------- AURORA (PROVIDER RESOURCE) ----------
+  # DB Subnet Group
+  AuroraSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub Aurora subnet group ${AWS::StackName}
+      SubnetIds:
+        - !Ref DatabaseSubneta
+        - !Ref DatabaseSubnetb
+
+  # Aurora Cluster
+  # Primary credentials are managed by RDS and stored in AWS Secrets Manager
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: !Ref DBEngine
+      EngineVersion: !Ref DBEngineVersion
+      DatabaseName: !Ref DBName
+      MasterUsername: !Ref DBPrimaryUsername
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref AuroraSubnetGroup
+      StorageEncrypted: true
+      VpcSecurityGroupIds:
+        - !Ref AuroraSecurityGroup
+
+  # Aurora Instance
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: !Ref DBEngine
+
+  # ---------- VPC LATTICE RESOURCE GATEWAY ----------
+  ResourceGateway:
+    Type: AWS::VpcLattice::ResourceGateway
+    Properties:
+      Name: resource-gateway-rds
+      IpAddressType: DUALSTACK
+      SecurityGroupIds:
+        - !Ref ResourceGatewaySecurityGroup
+      SubnetIds:
+        - !Ref RGWSubneta
+        - !Ref RGWSubnetb
+      VpcIdentifier: !Ref VPC
+
+  # ---------- VPC LATTICE RESOURCE CONFIGURATION (ARN) ----------
+  ResourceConfiguration:
+    Type: AWS::VpcLattice::ResourceConfiguration
+    Properties:
+      Name: resource-config-rds
+      ResourceConfigurationType: ARN
+      ResourceGatewayId: !Ref ResourceGateway
+      ResourceConfigurationDefinition:
+        ArnResource: !GetAtt AuroraCluster.DBClusterArn
+
+  # ---------- VPC LATTICE SERVICE NETWORK RESOURCE ASSOCIATION ----------
+  ResourceAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkResourceAssociation
+    Properties:
+      ResourceConfigurationId: !GetAtt ResourceConfiguration.Id
+      ServiceNetworkId: !Ref ServiceNetworkId
+
+Outputs:
+  ResourceConfigurationId:
+    Description: VPC Lattice resource configuration ID (ARN type, targets the Aurora cluster).
+    Value: !GetAtt ResourceConfiguration.Id
+
+  ResourceConfigurationArn:
+    Description: VPC Lattice resource configuration ARN.
+    Value: !GetAtt ResourceConfiguration.Arn
+
+  AuroraWriterEndpoint:
+    Description: Aurora cluster writer endpoint (resolves to a VPC Lattice-managed address, 129.224.0.x/17, from the consumer VPC).
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+
+  AuroraReaderEndpoint:
+    Description: Aurora cluster reader endpoint.
+    Value: !GetAtt AuroraCluster.ReadEndpoint.Address
+
+  RdsPrimaryUserSecretArn:
+    Description: ARN of the RDS-managed primary user secret in AWS Secrets Manager (reference only, not the secret value).
+    Value: !GetAtt AuroraCluster.MasterUserSecret.SecretArn

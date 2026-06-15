@@ -1,0 +1,27 @@
+/* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ SPDX-License-Identifier: MIT-0 */
+
+# --- patterns/3-advanced_architectures/1-centralized_vpc_endpoints/terraform/providers.tf ---
+
+terraform {
+  required_version = ">= 1.3.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 6.50.0"
+    }
+    awscc = {
+      source  = "hashicorp/awscc"
+      version = ">= 1.67.0"
+    }
+  }
+}
+
+# Provider definition
+provider "aws" {
+  region = var.aws_region
+}
+
+provider "awscc" {
+  region = var.aws_region
+}

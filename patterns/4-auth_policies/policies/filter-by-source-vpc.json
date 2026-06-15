@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowFromSpecificVpc",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "vpc-lattice-svcs:Invoke",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "vpc-lattice-svcs:SourceVpc": "vpc-0123456789abcdef0"
+        }
+      }
+    }
+  ]
+}

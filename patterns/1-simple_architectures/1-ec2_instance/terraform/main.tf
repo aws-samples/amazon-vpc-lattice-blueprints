@@ -15,22 +15,51 @@ data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv6" {
   name = "com.amazonaws.${data.aws_region.region.region}.ipv6.vpc-lattice"
 }
 
+# Open (allow-all) auth policy
+locals {
+  auth_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "*"
+        Effect    = "Allow"
+        Principal = "*"
+        Resource  = "*"
+      }
+    ]
+  })
+}
+
 # ---------- VPC LATTICE RESOURCES ----------
 # VPC Lattice service network
 module "service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
-    name      = "service-network-${var.identifier}"
-    auth_type = "NONE"
+    name        = "service-network-${var.identifier}"
+    auth_type   = "AWS_IAM"
+    auth_policy = local.auth_policy
   }
+}
+
+# ---------- VPC LATTICE ACCESS LOGGING ----------
+# CloudWatch Logs log group (access logs destination)
+resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
+  name              = "/aws/vpclattice/${var.identifier}"
+  retention_in_days = 7
+}
+
+# Access log subscription (service network scope - covers all associated services)
+resource "aws_vpclattice_access_log_subscription" "service_network_access_logs" {
+  resource_identifier = module.service_network.service_network.arn
+  destination_arn     = aws_cloudwatch_log_group.vpclattice_access_logs.arn
 }
 
 # VPC Lattice service1 - VPC Lattice-generated FQDN, HTTPS listener, EC2 instance targets
 module "service1" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     identifier = module.service_network.service_network.id
@@ -38,8 +67,9 @@ module "service1" {
 
   services = {
     service1 = {
-      name      = "service1-${var.identifier}"
-      auth_type = "NONE"
+      name        = "service1-${var.identifier}"
+      auth_type   = "AWS_IAM"
+      auth_policy = local.auth_policy
 
       listeners = {
         https = {
@@ -84,7 +114,7 @@ module "service1" {
 # VPC Lattice service2 - Custom domain name, HTTPS listener, IPv4 & IPv6 targets
 module "service2" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     identifier = module.service_network.service_network.id
@@ -93,7 +123,8 @@ module "service2" {
   services = {
     service2 = {
       name               = "service2-${var.identifier}"
-      auth_type          = "NONE"
+      auth_type          = "AWS_IAM"
+      auth_policy        = local.auth_policy
       custom_domain_name = var.custom_domain_name
       certificate_arn    = var.certificate_arn
       hosted_zone_id     = aws_route53_zone.private_hosted_zone.id
@@ -167,7 +198,7 @@ module "service2" {
 # ---------- CONSUMER VPC AND EC2 INSTANCES ----------
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "consumer-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
@@ -195,14 +226,14 @@ module "consumer_instances" {
   source = "../../../tf_modules/consumer_instance"
 
   identifier      = var.identifier
-  vpc_name        = "consumer_vpc"
+  vpc_name        = "consumer-vpc"
   vpc             = module.consumer_vpc
   vpc_information = var.vpc
 }
 
 # Security Group (VPC Lattice VPC association)
 resource "aws_security_group" "vpclattice_sg" {
-  name        = "consumer_vpc-vpclattice-security-group-${var.identifier}"
+  name        = "consumer-vpc-vpclattice-security-group-${var.identifier}"
   description = "VPC Lattice Security Group"
   vpc_id      = module.consumer_vpc.vpc_attributes.id
 }
@@ -228,7 +259,7 @@ resource "aws_route53_zone" "private_hosted_zone" {
 # ---------- PROVIDER VPC AND EC2 INSTANCES ----------
 module "provider_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "provider-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
@@ -341,6 +372,13 @@ resource "aws_instance" "web_instance" {
 # Update system and install httpd
 sudo yum update -y
 sudo yum install -y httpd php
+
+# Ensure httpd listens on both IPv4 and IPv6
+# Remove any existing Listen directives and add explicit ones
+sudo sed -i '/^Listen /d' /etc/httpd/conf/httpd.conf
+echo "Listen 0.0.0.0:80" | sudo tee -a /etc/httpd/conf/httpd.conf
+echo "Listen [::]:80" | sudo tee -a /etc/httpd/conf/httpd.conf
+
 sudo systemctl start httpd
 sudo systemctl enable httpd
 sudo chown -R $USER:$USER /var/www

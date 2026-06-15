@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: 2010-09-09
 Description: Provider VPC, Auto scaling group, and VPC Lattice resources (service, listener, target group)
 Transform: 'AWS::LanguageExtensions'
@@ -28,14 +30,27 @@ Resources:
     Type: AWS::VpcLattice::Service
     Properties:
       Name: !Sub service-${AWS::StackName}
-      AuthType: NONE
-  
+      AuthType: AWS_IAM
+
+  # Open (allow-all) auth policy
+  VpcLatticeServiceAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeService
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
+
   VpcLatticeServiceServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
     Properties:
       ServiceIdentifier: !Ref VpcLatticeService
       ServiceNetworkIdentifier: !Ref ServiceNetworkId
-  
+
   VpcLatticeServiceHTTPSListener:
     Type: AWS::VpcLattice::Listener
     Properties:
@@ -43,7 +58,7 @@ Resources:
       ServiceIdentifier: !Ref VpcLatticeService
       Port: 443
       Protocol: HTTPS
-      DefaultAction: 
+      DefaultAction:
         Forward:
           TargetGroups:
             - TargetGroupIdentifier: !Ref VpcLatticeTargetGroup
@@ -54,20 +69,20 @@ Resources:
     Properties:
       Name: target-asg
       Type: INSTANCE
-      Config: 
+      Config:
         Port: 80
         Protocol: HTTP
         ProtocolVersion: HTTP1
         VpcIdentifier: !Ref VPC
         HealthCheck:
-          Enabled: true 
+          Enabled: true
 
   # ---------- VPC ----------
   VPC:
     Type: AWS::EC2::VPC
-    Properties: 
+    Properties:
       CidrBlock: 10.0.0.0/16
-      Tags: 
+      Tags:
         - Key: Name
           Value: !Join
             - '-'
@@ -84,9 +99,9 @@ Resources:
     Type: AWS::EC2::EgressOnlyInternetGateway
     Properties:
       VpcId: !Ref VPC
-      Tags: 
+      Tags:
         - Key: Name
-          Value: !Sub provider-eigw-{AWS::StackName}
+          Value: !Sub provider-eigw-${AWS::StackName}
 
   # For::Each iteration: per Availability Zone
   # Resources to create: 2 subnets, 2 route tables, 2 route table associations, and VPC routes to ::/0 via Egress-only IGW - obtaining AZ affinity
@@ -102,15 +117,15 @@ Resources:
         Properties:
           VpcId: !Ref VPC
           AvailabilityZone: !Sub ${AWS::Region}${AvailabilityZone}
-          CidrBlock: !Select 
+          CidrBlock: !Select
             - !FindInMap [SubnetToIndex, !Sub "Workload${AvailabilityZone}", Index]
-            - !Cidr 
+            - !Cidr
               - !GetAtt VPC.CidrBlock
               - 256
               - 8
-          Ipv6CidrBlock: !Select 
+          Ipv6CidrBlock: !Select
             - !FindInMap [SubnetToIndex, !Sub "Workload${AvailabilityZone}", Index]
-            - !Cidr 
+            - !Cidr
               - !Select [0, !GetAtt VPC.Ipv6CidrBlocks]
               - 256
               - 64
@@ -126,7 +141,7 @@ Resources:
         Type: AWS::EC2::RouteTable
         Properties:
           VpcId: !Ref VPC
-          Tags: 
+          Tags:
             - Key: Name
               Value: !Join
                 - '-'
@@ -135,7 +150,7 @@ Resources:
       # Route Table associations
       'WorkloadRouteTableAssociation${AvailabilityZone}':
         Type: AWS::EC2::SubnetRouteTableAssociation
-        Properties: 
+        Properties:
           RouteTableId: !Ref
             'Fn::Sub': 'WorkloadRouteTable${AvailabilityZone}'
           SubnetId: !Ref
@@ -147,14 +162,14 @@ Resources:
             'Fn::Sub': 'WorkloadRouteTable${AvailabilityZone}'
           DestinationIpv6CidrBlock: '::/0'
           EgressOnlyInternetGatewayId: !Ref EIGW
-      
+
   # Security Group (Instances)
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Instance Security Group
       VpcId: !Ref VPC
-  
+
   # For::Each iteration: HTTP (80) & HTTPS (443)
   'Fn::ForEach::IngressSGRule':
     - WebProtocol
@@ -177,7 +192,7 @@ Resources:
           FromPort: !FindInMap [Protocol, !Sub "${WebProtocol}", Port]
           ToPort: !FindInMap [Protocol, !Sub "${WebProtocol}", Port]
           SourcePrefixListId: !GetAtt VpcLatticePrefixListIpv6.PrefixListId
-  
+
   InstanceSecurityGroupEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -185,7 +200,7 @@ Resources:
       Description: Allowing egress traffic (IPv4)
       IpProtocol: -1
       CidrIp: 0.0.0.0/0
-  
+
   InstanceSecurityGroupEgressIPv6:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -193,7 +208,7 @@ Resources:
       Description: Allowing egress traffic (IPv6)
       IpProtocol: -1
       CidrIpv6: ::/0
-  
+
   # ---------- AUTOSCALING GROUP ----------
   # Launch Template
   LaunchTemplateWebInstance:
@@ -222,16 +237,16 @@ Resources:
             # Update system and install httpd
             sudo yum update -y
             sudo yum install -y httpd php
-            
+
             # Ensure httpd listens on both IPv4 and IPv6
             sudo sed -i '/^Listen /d' /etc/httpd/conf/httpd.conf
             echo "Listen 0.0.0.0:80" | sudo tee -a /etc/httpd/conf/httpd.conf
             echo "Listen [::]:80" | sudo tee -a /etc/httpd/conf/httpd.conf
-            
+
             sudo systemctl start httpd
             sudo systemctl enable httpd
             sudo chown -R $USER:$USER /var/www
-            
+
             # Create index.php to show request source IP
             cat > /var/www/html/index.php <<'HTML'
             <html>
@@ -246,7 +261,7 @@ Resources:
             Tags:
               - Key: Name
                 Value: !Sub 'provider-instance-asg-target'
-  
+
   # AutoScaling group
   WebASG:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -275,22 +290,23 @@ Resources:
     Type: Custom::PrefixListLookup
     Properties:
       ServiceToken: !GetAtt PrefixListLookupFunction.Arn
-      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.vpc-lattice" 
+      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.vpc-lattice"
 
   # VPC Lattice IPv6
   VpcLatticePrefixListIpv6:
     Type: Custom::PrefixListLookup
     Properties:
       ServiceToken: !GetAtt PrefixListLookupFunction.Arn
-      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.ipv6.vpc-lattice" 
-  
+      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.ipv6.vpc-lattice"
+
   # AWS Lambda function
   PrefixListLookupFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.13
+      Runtime: python3.14
       Handler: index.handler
       Role: !GetAtt PrefixListLookupRole.Arn
+      Timeout: 30
       Code:
         ZipFile: |
           import boto3
@@ -301,25 +317,25 @@ Resources:
               try:
                 ec2 = boto3.client('ec2')
                 prefix_list_name = event['ResourceProperties']['PrefixListName']
-                
+
                 # Get all managed prefix lists
                 response = ec2.describe_managed_prefix_lists(
                   Filters=[{'Name': 'prefix-list-name', 'Values': [prefix_list_name]}]
                 )
-                
+
                 if response['PrefixLists']:
                   prefix_list_id = response['PrefixLists'][0]['PrefixListId']
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, 
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS,
                                   {'PrefixListId': prefix_list_id})
                 else:
-                  cfnresponse.send(event, context, cfnresponse.FAILED, 
+                  cfnresponse.send(event, context, cfnresponse.FAILED,
                                   {'Error': f'Prefix list {prefix_list_name} not found'})
               except Exception as e:
-                cfnresponse.send(event, context, cfnresponse.FAILED, 
+                cfnresponse.send(event, context, cfnresponse.FAILED,
                                 {'Error': str(e)})
             else:  # Delete
               cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-    
+
   # IAM role for the Lambda function
   PrefixListLookupRole:
     Type: AWS::IAM::Role
@@ -345,5 +361,5 @@ Resources:
 
 Outputs:
   ServiceDomainName:
-    Type: String
+    Description: VPC Lattice service domain name
     Value: !GetAtt VpcLatticeService.DnsEntry.DomainName

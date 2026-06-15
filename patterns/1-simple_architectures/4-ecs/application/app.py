@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
@@ -7,13 +9,13 @@ def hello():
     # Get the request IP address
     # Check X-Forwarded-For header first (VPC Lattice may use this)
     request_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    
+
     # Create response with message and request IP
     response = {
         "message": "Hello from ECS Fargate!!",
         "request_ip": request_ip
     }
-    
+
     return jsonify(response), 200
 
 @app.route('/health', methods=['GET'])

@@ -3,31 +3,50 @@
 
 # --- patterns/1-simple_architectures/3-lambda_function/terraform/main.tf ---
 
-# Data source: Amazon VPC Lattice prefix list (IPv4 and IPv6)
-data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv4" {
-  name = "com.amazonaws.${var.aws_region}.vpc-lattice"
-}
-
-data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv6" {
-  name = "com.amazonaws.${var.aws_region}.ipv6.vpc-lattice"
-}
-
 # ---------- VPC LATTICE RESOURCES ----------
+# Open (allow-all) auth policy
+locals {
+  auth_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "*"
+        Effect    = "Allow"
+        Principal = "*"
+        Resource  = "*"
+      }
+    ]
+  })
+}
+
 # VPC Lattice service network
 module "service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
-    name      = "service-network-${var.identifier}"
-    auth_type = "NONE"
+    name        = "service-network-${var.identifier}"
+    auth_type   = "AWS_IAM"
+    auth_policy = local.auth_policy
   }
+}
+
+# CloudWatch Logs log group (access logs destination)
+resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
+  name              = "/aws/vpclattice/${var.identifier}"
+  retention_in_days = 7
+}
+
+# Access log subscription (service network scope - covers all associated services)
+resource "aws_vpclattice_access_log_subscription" "service_network_access_logs" {
+  resource_identifier = module.service_network.service_network.arn
+  destination_arn     = aws_cloudwatch_log_group.vpclattice_access_logs.arn
 }
 
 # VPC Lattice service - VPC Lattice-generated FQDN, HTTPS listener, Instance type target
 module "service" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     identifier = module.service_network.service_network.id
@@ -35,8 +54,9 @@ module "service" {
 
   services = {
     service = {
-      name      = "service-${var.identifier}"
-      auth_type = "NONE"
+      name        = "service-${var.identifier}"
+      auth_type   = "AWS_IAM"
+      auth_policy = local.auth_policy
 
       listeners = {
         https = {
@@ -65,7 +85,7 @@ module "service" {
 # ---------- CONSUMER VPC AND EC2 INSTANCES ----------
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "consumer-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
@@ -93,14 +113,14 @@ module "consumer_instances" {
   source = "../../../tf_modules/consumer_instance"
 
   identifier      = var.identifier
-  vpc_name        = "consumer_vpc"
+  vpc_name        = "consumer-vpc"
   vpc             = module.consumer_vpc
   vpc_information = var.vpc
 }
 
 # Security Group (VPC Lattice VPC association)
 resource "aws_security_group" "vpclattice_sg" {
-  name        = "consumer_vpc-vpclattice-security-group-${var.identifier}"
+  name        = "consumer-vpc-vpclattice-security-group-${var.identifier}"
   description = "VPC Lattice Security Group"
   vpc_id      = module.consumer_vpc.vpc_attributes.id
 }
@@ -117,12 +137,12 @@ resource "aws_vpc_security_group_ingress_rule" "allowing_ingress_instances_https
 # ---------- PROVIDER LAMBDA FUNCTION ----------
 # AWS Lambda Function
 resource "aws_lambda_function" "lambda" {
-  function_name    = "lambda_function"
+  function_name    = "provider-function-${var.identifier}"
   filename         = "lambda_function.zip"
   source_code_hash = data.archive_file.python_lambda_package.output_base64sha256
 
   role    = aws_iam_role.lambda_role.arn
-  runtime = "python3.13"
+  runtime = "python3.14"
   handler = "lambda_function.lambda_handler"
 }
 
@@ -134,7 +154,7 @@ data "archive_file" "python_lambda_package" {
 
 # IAM Role
 resource "aws_iam_role" "lambda_role" {
-  name = "lambda-route53-role"
+  name = "provider-function-role-${var.identifier}"
   path = "/"
 
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role_policy.json

@@ -1,5 +1,7 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: 2010-09-09
-Description: Consumer VPC, EC2 Instances, and VPC Lattice service network
+Description: Consumer account - service network (owned here), consumer VPC & EC2 instances
 Transform: 'AWS::LanguageExtensions'
 
 Parameters:
@@ -19,35 +21,75 @@ Mappings:
       Index: 3
 
 Resources:
-  # ---------- VPC LATTICE SERVICE NETWORK ----------
+  # ---------- VPC LATTICE SERVICE NETWORK (OWNED BY THE CONSUMER) ----------
   VpcLatticeServiceNetwork:
     Type: AWS::VpcLattice::ServiceNetwork
     Properties:
-      AuthType: NONE
-      Name: service-network
-  
+      AuthType: AWS_IAM
+      Name: !Sub service-network-${AWS::StackName}
+
+  # Permissive (allow-all) auth policy - matches the Terraform implementation.
+  VpcLatticeServiceNetworkAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeServiceNetwork
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
+
+  # Associate the shared VPC Lattice service to this service network
   VpcLatticeServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
     Properties:
       ServiceIdentifier: !GetAtt GetRAMResourceShare.VpcLatticeService
       ServiceNetworkIdentifier: !Ref VpcLatticeServiceNetwork
-  
-  VpcLatticeServiceNetworkAssociation:
+
+  # Associate the shared Aurora resource configuration to this service network
+  VpcLatticeResourceAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkResourceAssociation
+    Properties:
+      ResourceConfigurationId: !GetAtt GetRAMResourceShare.ResourceConfiguration
+      ServiceNetworkId: !Ref VpcLatticeServiceNetwork
+
+  # ---------- VPC LATTICE ACCESS LOGGING (SERVICE NETWORK SCOPE - THIS ACCOUNT OWNS THE NETWORK) ----------
+  VpcLatticeAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vpclattice/${AWS::StackName}'
+      RetentionInDays: 7
+
+  VpcLatticeAccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeServiceNetwork
+      DestinationArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${VpcLatticeAccessLogs}'
+
+  # ---------- VPC LATTICE SERVICE NETWORK VPC ASSOCIATION ----------
+  # Private DNS (ALL_DOMAINS) so the Aurora resource configuration endpoint resolves to a
+  # VPC Lattice-managed address from the consumer VPC.
+  ServiceNetworkVpcAssociation:
     Type: AWS::VpcLattice::ServiceNetworkVpcAssociation
     Properties:
       ServiceNetworkIdentifier: !Ref VpcLatticeServiceNetwork
       VpcIdentifier: !Ref VPC
-      SecurityGroupIds: 
+      PrivateDnsEnabled: true
+      DnsOptions:
+        PrivateDnsPreference: ALL_DOMAINS
+      SecurityGroupIds:
         - !Ref VpcLatticeSecurityGroup
 
   # ---------- VPC ----------
   VPC:
     Type: AWS::EC2::VPC
-    Properties: 
+    Properties:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags: 
+      Tags:
         - Key: Name
           Value: !Join
             - '-'
@@ -60,8 +102,27 @@ Resources:
       AmazonProvidedIpv6CidrBlock: true
       VpcId: !Ref VPC
 
+  # Egress-only Internet Gateway - IPv6 egress so the consumer instances can install the
+  # dig / MySQL client tools used by the testing steps (no NAT cost).
+  EIGW:
+    Type: AWS::EC2::EgressOnlyInternetGateway
+    Properties:
+      VpcId: !Ref VPC
+
+  # Default IPv6 route (::/0) via the Egress-only IGW for the workload subnets.
+  'Fn::ForEach::WorkloadEIGWRoutes':
+    - AvailabilityZone
+    - [a, b]
+    - 'DefaultToEIGWRoute${AvailabilityZone}':
+        Type: AWS::EC2::Route
+        Properties:
+          RouteTableId: !Ref
+            'Fn::Sub': 'WorkloadRouteTable${AvailabilityZone}'
+          DestinationIpv6CidrBlock: '::/0'
+          EgressOnlyInternetGatewayId: !Ref EIGW
+
   # For::Each iteration: per subnet type (Workload, Endpoints) and AZ (2 AZs)
-  # Resources to create: 4 subnets, 4 route tables, 4 route table associations - obtaining AZ affinity
+  # Resources to create: 4 subnets, 4 route tables, 4 route table associations - obtaining AZ affinity
   'Fn::ForEach::SubnetTypes':
     - SubnetType
     - [Workload, Endpoints]
@@ -69,7 +130,7 @@ Resources:
       'Fn::ForEach::AZ':
         - AvailabilityZone
         - [a, b]
-          # Subnets
+          # Subnets
         - '${SubnetType}Subnet${AvailabilityZone}':
             DependsOn:
               - Ipv6Cidr
@@ -77,15 +138,15 @@ Resources:
             Properties:
               VpcId: !Ref VPC
               AvailabilityZone: !Sub ${AWS::Region}${AvailabilityZone}
-              CidrBlock: !Select 
+              CidrBlock: !Select
                 - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
-                - !Cidr 
+                - !Cidr
                   - !GetAtt VPC.CidrBlock
                   - 256
                   - 8
-              Ipv6CidrBlock: !Select 
+              Ipv6CidrBlock: !Select
                 - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
-                - !Cidr 
+                - !Cidr
                   - !Select [0, !GetAtt VPC.Ipv6CidrBlocks]
                   - 256
                   - 64
@@ -101,7 +162,7 @@ Resources:
             Type: AWS::EC2::RouteTable
             Properties:
               VpcId: !Ref VPC
-              Tags: 
+              Tags:
                 - Key: Name
                   Value: !Join
                     - '-'
@@ -110,19 +171,19 @@ Resources:
           # Route Table associations
           '${SubnetType}RouteTableAssociation${AvailabilityZone}':
             Type: AWS::EC2::SubnetRouteTableAssociation
-            Properties: 
+            Properties:
               RouteTableId: !Ref
                 'Fn::Sub': '${SubnetType}RouteTable${AvailabilityZone}'
               SubnetId: !Ref
                 'Fn::Sub': '${SubnetType}Subnet${AvailabilityZone}'
-  
+
   # Security Group (Instances)
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Instance Security Group
       VpcId: !Ref VPC
-  
+
   InstanceSecurityGroupIngressEIC:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -132,7 +193,7 @@ Resources:
       FromPort: 22
       ToPort: 22
       SourceSecurityGroupId: !Ref EndpointSecurityGroup
-  
+
   InstanceSecurityGroupEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -140,7 +201,7 @@ Resources:
       Description: Allowing egress traffic (IPv4)
       IpProtocol: -1
       CidrIp: 0.0.0.0/0
-  
+
   InstanceSecurityGroupEgressIPv6:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -155,7 +216,7 @@ Resources:
     Properties:
       GroupDescription: Endpoints Security Group
       VpcId: !Ref VPC
-  
+
   EndpointSecurityGroupEgressEIC:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -165,14 +226,14 @@ Resources:
       FromPort: 22
       ToPort: 22
       DestinationSecurityGroupId: !Ref InstanceSecurityGroup
-  
+
   # Security Group (VPC Lattice VPC association)
   VpcLatticeSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: VPC Lattice VPC association Security Group
       VpcId: !Ref VPC
-  
+
   VpcLatticeSecurityGroupIngressInstanceHTTPS:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -181,6 +242,16 @@ Resources:
       IpProtocol: tcp
       FromPort: 443
       ToPort: 443
+      SourceSecurityGroupId: !Ref InstanceSecurityGroup
+
+  VpcLatticeSecurityGroupIngressInstanceMySQL:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref VpcLatticeSecurityGroup
+      Description: Allowing MySQL traffic to the Aurora resource configuration
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
       SourceSecurityGroupId: !Ref InstanceSecurityGroup
 
   # ---------- EC2 INSTANCES ----------
@@ -192,40 +263,120 @@ Resources:
         Type: AWS::EC2::Instance
         Properties:
           InstanceType: t3.micro
+          IamInstanceProfile: !Ref EC2InstanceProfile
           SecurityGroupIds:
             - !Ref InstanceSecurityGroup
-          SubnetId: !Ref 
+          SubnetId: !Ref
             'Fn::Sub': 'WorkloadSubnet${AvailabilityZone}'
           ImageId: !Ref LatestAmiId
           Ipv6AddressCount: 1
+          MetadataOptions:
+            HttpEndpoint: enabled
+            HttpTokens: required
+          BlockDeviceMappings:
+            - DeviceName: /dev/xvda
+              Ebs:
+                Encrypted: true
           Tags:
             - Key: Name
               Value: !Join
                 - '-'
                 - - !Sub consumer-instance-${AvailabilityZone}
                   - !Ref AWS::StackName
-  
+
   # ---------- EC2 INSTANCE CONNECT ENDPOINT ----------
   EICEndpoint:
     Type: AWS::EC2::InstanceConnectEndpoint
     Properties:
       PreserveClientIp: false
-      SecurityGroupIds: 
+      SecurityGroupIds:
         - !Ref EndpointSecurityGroup
       SubnetId: !Ref EndpointsSubneta
-      Tags: 
+      Tags:
         - Key: Name
           Value : !Join
             - '-'
             - - !Sub consumer-eic
               - !Ref AWS::StackName
 
+  # ---------- VPC ENDPOINT (SECRETS MANAGER) ----------
+  SecretsManagerEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Secrets Manager interface endpoint Security Group
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub consumer-vpc-secretsmanager-endpoint-security-group-${AWS::StackName}
+
+  SecretsManagerEndpointIngressHTTPS:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecretsManagerEndpointSecurityGroup
+      Description: Allowing HTTPS from the consumer instances
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref InstanceSecurityGroup
+
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref EndpointsSubneta
+        - !Ref EndpointsSubnetb
+      SecurityGroupIds:
+        - !Ref SecretsManagerEndpointSecurityGroup
+
+  # ---------- CONSUMER INSTANCE IAM (read the shared Aurora secret) ----------
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: read-shared-aurora-secret
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadSharedAuroraSecret
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:*:secret:rds!*'
+              - Sid: DecryptSharedAuroraSecret
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
   # ---------- CUSTOM RESOURCE: GET RAM RESOURCE SHARE ----------
   GetRAMResourceShare:
     Type: Custom::GetRAMResourceShare
     Properties:
       ServiceToken: !GetAtt GetRAMShareFunction.Arn
-      ShareName: service-resource-share
+      ShareName: provider-resource-share
 
   GetRAMShareFunction:
     Type: AWS::Lambda::Function
@@ -238,44 +389,51 @@ Resources:
         ZipFile: |
           import boto3
           import cfnresponse
-          
+
           def handler(event, context):
               try:
                   if event['RequestType'] == 'Delete':
                       cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
                       return
-                  
+
                   share_name = event['ResourceProperties']['ShareName']
                   ram_client = boto3.client('ram')
-                  
+
                   # Get resource shares shared WITH this account
                   response = ram_client.get_resource_shares(
                       resourceOwner='OTHER-ACCOUNTS',
                       name=share_name
                   )
-                  
+
                   if not response['resourceShares']:
-                      cfnresponse.send(event, context, cfnresponse.FAILED, 
+                      cfnresponse.send(event, context, cfnresponse.FAILED,
                                      {'Error': f'No resource share found with name: {share_name}'})
                       return
-                  
+
                   share = response['resourceShares'][0]
-                  
+
                   # Get associated resources
                   resources_response = ram_client.list_resources(
                       resourceOwner='OTHER-ACCOUNTS',
                       resourceShareArns=[share['resourceShareArn']]
                   )
-                  
+
                   resource_arns = [r['arn'] for r in resources_response.get('resources', [])]
-                  
+
+                  # The single provider share contains both the service and the resource configuration.
+                  service_arn = next((a for a in resource_arns if ':service/' in a), '')
+                  resource_config_arn = next((a for a in resource_arns if ':resourceconfiguration/' in a), '')
+                  # ServiceNetworkResourceAssociation requires the resource config ID (rcfg-...), not the ARN.
+                  resource_config_id = resource_config_arn.split('/')[-1] if resource_config_arn else ''
+
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
                       'ResourceShareArn': share['resourceShareArn'],
                       'ResourceShareName': share['name'],
                       'Status': share['status'],
                       'OwningAccountId': share['owningAccountId'],
                       'ResourceArns': ','.join(resource_arns),
-                      'VpcLatticeService': resource_arns[0] if resource_arns else ''
+                      'VpcLatticeService': service_arn,
+                      'ResourceConfiguration': resource_config_id
                   })
               except Exception as e:
                   print(f"Error: {str(e)}")
@@ -304,7 +462,7 @@ Resources:
                   - ram:ListResources
                 Resource: '*'
 
-Outputs:  
+Outputs:
   ConsumerInstanceA:
     Description: Consumer EC2 Instance ID (AZ a)
     Value: !Ref Instancea

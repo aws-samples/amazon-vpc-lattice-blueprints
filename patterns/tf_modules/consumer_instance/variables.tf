@@ -22,3 +22,9 @@ variable "vpc_information" {
   type        = any
   description = "VPC information (defined in root variables.tf file)."
 }
+
+variable "instance_profile_name" {
+  type        = string
+  description = "Optional IAM instance profile name to attach to the consumer instances. Defaults to none (no profile attached)."
+  default     = null
+}

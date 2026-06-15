@@ -23,21 +23,50 @@ data "aws_ec2_managed_prefix_list" "vpclattice_pl_ipv6" {
 }
 
 # ---------- VPC LATTICE RESOURCES ----------
+# Open (allow-all) auth policy.
+locals {
+  auth_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "*"
+        Effect    = "Allow"
+        Principal = "*"
+        Resource  = "*"
+      }
+    ]
+  })
+}
+
 # VPC Lattice service network
 module "service_network" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
-    name      = "service-network-${var.identifier}"
-    auth_type = "NONE"
+    name        = "service-network-${var.identifier}"
+    auth_type   = "AWS_IAM"
+    auth_policy = local.auth_policy
   }
+}
+
+# ---------- VPC LATTICE ACCESS LOGGING ----------
+# CloudWatch Logs log group (access logs destination)
+resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
+  name              = "/aws/vpclattice/${var.identifier}"
+  retention_in_days = 7
+}
+
+# Access log subscription (service network scope - covers all associated services)
+resource "aws_vpclattice_access_log_subscription" "service_network_access_logs" {
+  resource_identifier = module.service_network.service_network.arn
+  destination_arn     = aws_cloudwatch_log_group.vpclattice_access_logs.arn
 }
 
 # VPC Lattice service - VPC Lattice-generated FQDN, HTTPS listener, IP type target
 module "service" {
   source  = "aws-ia/amazon-vpc-lattice-module/aws"
-  version = "1.1.0"
+  version = "= 1.1.0"
 
   service_network = {
     identifier = module.service_network.service_network.id
@@ -45,8 +74,9 @@ module "service" {
 
   services = {
     service = {
-      name      = "service-${var.identifier}"
-      auth_type = "NONE"
+      name        = "service-${var.identifier}"
+      auth_type   = "AWS_IAM"
+      auth_policy = local.auth_policy
 
       listeners = {
         https = {
@@ -82,7 +112,7 @@ module "service" {
 # ---------- CONSUMER VPC AND EC2 INSTANCES ----------
 module "consumer_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "consumer-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
@@ -110,14 +140,14 @@ module "consumer_instances" {
   source = "../../../tf_modules/consumer_instance"
 
   identifier      = var.identifier
-  vpc_name        = "consumer_vpc"
+  vpc_name        = "consumer-vpc"
   vpc             = module.consumer_vpc
   vpc_information = var.vpc
 }
 
 # Security Group (VPC Lattice VPC association)
 resource "aws_security_group" "vpclattice_sg" {
-  name        = "consumer_vpc-vpclattice-security-group-${var.identifier}"
+  name        = "consumer-vpc-vpclattice-security-group-${var.identifier}"
   description = "VPC Lattice Security Group"
   vpc_id      = module.consumer_vpc.vpc_attributes.id
 }
@@ -146,7 +176,7 @@ resource "aws_ecr_repository" "ecr_repository" {
 # Provider VPC
 module "provider_vpc" {
   source  = "aws-ia/vpc/aws"
-  version = "= 4.5.0"
+  version = "= 4.7.3"
 
   name                                 = "provider-vpc-${var.identifier}"
   cidr_block                           = var.vpc.cidr_block
@@ -243,7 +273,7 @@ resource "aws_ecs_service" "ecs_service" {
 
 # Security Group - ECS Tasks
 resource "aws_security_group" "ecs_tasks" {
-  name        = "provider-ecs-tasks"
+  name        = "provider-vpc-ecs-tasks-security-group-${var.identifier}"
   description = "Allow inbound traffic for ECS tasks"
   vpc_id      = module.provider_vpc.vpc_attributes.id
 }

@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSpecificRole",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::111122223333:role/consumer-role"
+      },
+      "Action": "vpc-lattice-svcs:Invoke",
+      "Resource": "*"
+    }
+  ]
+}

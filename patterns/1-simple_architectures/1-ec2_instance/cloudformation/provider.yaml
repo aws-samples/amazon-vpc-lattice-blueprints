@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: 2010-09-09
 Description: Provider VPC, EC2 Instances, and VPC Lattice services
 Transform: 'AWS::LanguageExtensions'
@@ -44,14 +46,27 @@ Resources:
     Type: AWS::VpcLattice::Service
     Properties:
       Name: !Sub service1-${AWS::StackName}
-      AuthType: NONE
-  
+      AuthType: AWS_IAM
+
+  # Open (allow-all) auth policy
+  VpcLatticeService1AuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeService1
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
+
   VpcLatticeService1ServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
     Properties:
       ServiceIdentifier: !Ref VpcLatticeService1
       ServiceNetworkIdentifier: !Ref ServiceNetworkId
-  
+
   VpcLatticeService1HTTPSListener:
     Type: AWS::VpcLattice::Listener
     Properties:
@@ -59,7 +74,7 @@ Resources:
       ServiceIdentifier: !Ref VpcLatticeService1
       Port: 443
       Protocol: HTTPS
-      DefaultAction: 
+      DefaultAction:
         Forward:
           TargetGroups:
             - TargetGroupIdentifier: !Ref VpcLatticeTargetGroup1
@@ -70,14 +85,14 @@ Resources:
     Properties:
       Name: target-instance
       Type: INSTANCE
-      Config: 
+      Config:
         Port: 80
         Protocol: HTTP
         ProtocolVersion: HTTP1
         VpcIdentifier: !Ref VPC
         HealthCheck:
-          Enabled: true 
-      Targets: 
+          Enabled: true
+      Targets:
         - Id: !Ref Instancea
           Port: 80
         - Id: !Ref Instanceb
@@ -88,10 +103,23 @@ Resources:
     Type: AWS::VpcLattice::Service
     Properties:
       Name: !Sub service2-${AWS::StackName}
-      AuthType: NONE
+      AuthType: AWS_IAM
       CertificateArn: !Ref Service2CertificateArn
       CustomDomainName: !Ref Service2CustomDomainName
-  
+
+  # Open (allow-all) auth policy.
+  VpcLatticeService2AuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeService2
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
+
   VpcLatticeService2ServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
     Properties:
@@ -105,7 +133,7 @@ Resources:
       ServiceIdentifier: !Ref VpcLatticeService2
       Port: 443
       Protocol: HTTPS
-      DefaultAction: 
+      DefaultAction:
         Forward:
           TargetGroups:
             - TargetGroupIdentifier: !Ref VpcLatticeTargetGroup2IPv4
@@ -118,34 +146,34 @@ Resources:
     Properties:
       Name: target-ipv4
       Type: IP
-      Config: 
+      Config:
         IpAddressType: IPV4
         Port: 80
         Protocol: HTTP
         ProtocolVersion: HTTP1
         VpcIdentifier: !Ref VPC
         HealthCheck:
-          Enabled: true 
-      Targets: 
+          Enabled: true
+      Targets:
         - Id: !GetAtt Instancea.PrivateIp
           Port: 80
         - Id: !GetAtt Instanceb.PrivateIp
           Port: 80
-  
+
   VpcLatticeTargetGroup2IPv6:
     Type: AWS::VpcLattice::TargetGroup
     Properties:
       Name: target-ipv6
       Type: IP
-      Config: 
+      Config:
         IpAddressType: IPV6
         Port: 80
         Protocol: HTTP
         ProtocolVersion: HTTP1
         VpcIdentifier: !Ref VPC
         HealthCheck:
-          Enabled: true 
-      Targets: 
+          Enabled: true
+      Targets:
         - Id: !GetAtt EC2IPv6AddressInstancea.IPv6Address
           Port: 80
         - Id: !GetAtt EC2IPv6AddressInstanceb.IPv6Address
@@ -154,9 +182,9 @@ Resources:
   # ---------- VPC ----------
   VPC:
     Type: AWS::EC2::VPC
-    Properties: 
+    Properties:
       CidrBlock: 10.0.0.0/16
-      Tags: 
+      Tags:
         - Key: Name
           Value: !Join
             - '-'
@@ -173,9 +201,9 @@ Resources:
     Type: AWS::EC2::EgressOnlyInternetGateway
     Properties:
       VpcId: !Ref VPC
-      Tags: 
+      Tags:
         - Key: Name
-          Value: !Sub provider-eigw-{AWS::StackName}
+          Value: !Sub provider-eigw-${AWS::StackName}
 
   # For::Each iteration: per subnet type (Workload, Endpoints) and AZ (2 AZs)
   # Resources to create: 4 subnets, 4 route tables, 4 route table associations - obtaining AZ affinity
@@ -194,15 +222,15 @@ Resources:
             Properties:
               VpcId: !Ref VPC
               AvailabilityZone: !Sub ${AWS::Region}${AvailabilityZone}
-              CidrBlock: !Select 
+              CidrBlock: !Select
                 - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
-                - !Cidr 
+                - !Cidr
                   - !GetAtt VPC.CidrBlock
                   - 256
                   - 8
-              Ipv6CidrBlock: !Select 
+              Ipv6CidrBlock: !Select
                 - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
-                - !Cidr 
+                - !Cidr
                   - !Select [0, !GetAtt VPC.Ipv6CidrBlocks]
                   - 256
                   - 64
@@ -218,7 +246,7 @@ Resources:
             Type: AWS::EC2::RouteTable
             Properties:
               VpcId: !Ref VPC
-              Tags: 
+              Tags:
                 - Key: Name
                   Value: !Join
                     - '-'
@@ -227,12 +255,12 @@ Resources:
           # Route Table associations
           '${SubnetType}RouteTableAssociation${AvailabilityZone}':
             Type: AWS::EC2::SubnetRouteTableAssociation
-            Properties: 
+            Properties:
               RouteTableId: !Ref
                 'Fn::Sub': '${SubnetType}RouteTable${AvailabilityZone}'
               SubnetId: !Ref
                 'Fn::Sub': '${SubnetType}Subnet${AvailabilityZone}'
-  
+
   # For::Each iteration: per Availability Zone
   # VPC routes to ::/0 via Egress-Only Internet gateway
   'Fn::ForEach::VPCRoutes':
@@ -245,14 +273,14 @@ Resources:
             'Fn::Sub': 'WorkloadRouteTable${AvailabilityZone}'
           DestinationIpv6CidrBlock: '::/0'
           EgressOnlyInternetGatewayId: !Ref EIGW
-      
+
   # Security Group (Instances)
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Instance Security Group
       VpcId: !Ref VPC
-  
+
   # For::Each iteration: HTTP (80) & HTTPS (443)
   'Fn::ForEach::IngressSGRule':
     - WebProtocol
@@ -275,7 +303,7 @@ Resources:
           FromPort: !FindInMap [Protocol, !Sub "${WebProtocol}", Port]
           ToPort: !FindInMap [Protocol, !Sub "${WebProtocol}", Port]
           SourcePrefixListId: !GetAtt VpcLatticePrefixListIpv6.PrefixListId
-  
+
   InstanceSecurityGroupEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -283,7 +311,7 @@ Resources:
       Description: Allowing egress traffic (IPv4)
       IpProtocol: -1
       CidrIp: 0.0.0.0/0
-  
+
   InstanceSecurityGroupEgressIPv6:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -291,7 +319,7 @@ Resources:
       Description: Allowing egress traffic (IPv6)
       IpProtocol: -1
       CidrIpv6: ::/0
-  
+
   # ---------- EC2 INSTANCES ----------
   # For::Each iteration: per AZ (2 AZs)
   'Fn::ForEach::Instances':
@@ -303,33 +331,40 @@ Resources:
           InstanceType: t3.micro
           SecurityGroupIds:
             - !Ref InstanceSecurityGroup
-          SubnetId: !Ref 
+          SubnetId: !Ref
             'Fn::Sub': 'WorkloadSubnet${AvailabilityZone}'
           ImageId: !Ref LatestAmiId
           Ipv6AddressCount: 1
+          MetadataOptions:
+            HttpEndpoint: enabled
+            HttpTokens: required
+          BlockDeviceMappings:
+            - DeviceName: /dev/xvda
+              Ebs:
+                Encrypted: true
           Tags:
             - Key: Name
               Value: !Join
                 - '-'
                 - - !Sub provider-instance-${AvailabilityZone}
                   - !Ref AWS::StackName
-          UserData: 
+          UserData:
             Fn::Base64: |
               #!/bin/bash
               # Update system and install httpd
               sudo yum update -y
               sudo yum install -y httpd php
-              
+
               # Ensure httpd listens on both IPv4 and IPv6
               # Remove any existing Listen directives and add explicit ones
               sudo sed -i '/^Listen /d' /etc/httpd/conf/httpd.conf
               echo "Listen 0.0.0.0:80" | sudo tee -a /etc/httpd/conf/httpd.conf
               echo "Listen [::]:80" | sudo tee -a /etc/httpd/conf/httpd.conf
-              
+
               sudo systemctl start httpd
               sudo systemctl enable httpd
               sudo chown -R $USER:$USER /var/www
-              
+
               # Create index.php to show request source IP
               cat > /var/www/html/index.php <<'HTML'
               <html>
@@ -339,16 +374,16 @@ Resources:
               </body>
               </html>
               HTML
-  
+
   # ---------- PRIVATE HOSTED ZONE ----------
   PrivateHostedZone:
     Type: AWS::Route53::HostedZone
     Properties:
       Name: !Ref HostedZoneName
-      VPCs: 
+      VPCs:
         - VPCId: !Ref ConsumerVpcId
           VPCRegion: !Sub '${AWS::Region}'
-  
+
   VpcLatticeServiceAliasARecord:
     Type: AWS::Route53::RecordSet
     Properties:
@@ -359,7 +394,7 @@ Resources:
         DNSName: !GetAtt VpcLatticeService2.DnsEntry.DomainName
         HostedZoneId: !GetAtt VpcLatticeService2.DnsEntry.HostedZoneId
         EvaluateTargetHealth: false
-  
+
   VpcLatticeServiceAliasAAAARecord:
     Type: AWS::Route53::RecordSet
     Properties:
@@ -377,22 +412,23 @@ Resources:
     Type: Custom::PrefixListLookup
     Properties:
       ServiceToken: !GetAtt PrefixListLookupFunction.Arn
-      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.vpc-lattice" 
+      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.vpc-lattice"
 
   # VPC Lattice IPv6
   VpcLatticePrefixListIpv6:
     Type: Custom::PrefixListLookup
     Properties:
       ServiceToken: !GetAtt PrefixListLookupFunction.Arn
-      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.ipv6.vpc-lattice" 
-  
+      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.ipv6.vpc-lattice"
+
   # AWS Lambda function
   PrefixListLookupFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.13
+      Runtime: python3.14
       Handler: index.handler
       Role: !GetAtt PrefixListLookupRole.Arn
+      Timeout: 30
       Code:
         ZipFile: |
           import boto3
@@ -403,25 +439,25 @@ Resources:
               try:
                 ec2 = boto3.client('ec2')
                 prefix_list_name = event['ResourceProperties']['PrefixListName']
-                
+
                 # Get all managed prefix lists
                 response = ec2.describe_managed_prefix_lists(
                   Filters=[{'Name': 'prefix-list-name', 'Values': [prefix_list_name]}]
                 )
-                
+
                 if response['PrefixLists']:
                   prefix_list_id = response['PrefixLists'][0]['PrefixListId']
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, 
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS,
                                   {'PrefixListId': prefix_list_id})
                 else:
-                  cfnresponse.send(event, context, cfnresponse.FAILED, 
+                  cfnresponse.send(event, context, cfnresponse.FAILED,
                                   {'Error': f'Prefix list {prefix_list_name} not found'})
               except Exception as e:
-                cfnresponse.send(event, context, cfnresponse.FAILED, 
+                cfnresponse.send(event, context, cfnresponse.FAILED,
                                 {'Error': str(e)})
             else:  # Delete
               cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-    
+
   # IAM role for the Lambda function
   PrefixListLookupRole:
     Type: AWS::IAM::Role
@@ -447,72 +483,69 @@ Resources:
 
   # ---------- CUSTOM RESOURCE: OBTAIN IPV6 ADDRESS FROM EC2 INSTANCES ----------
   EC2IPv6AddressInstancea:
-    DependsOn:
-      - Instancea
     Type: Custom::EC2IPv6Address
     Properties:
       ServiceToken: !GetAtt EC2IPv6AddressFunction.Arn
       InstanceId: !Ref Instancea
-  
+
   EC2IPv6AddressInstanceb:
-    DependsOn:
-      - Instanceb
     Type: Custom::EC2IPv6Address
     Properties:
       ServiceToken: !GetAtt EC2IPv6AddressFunction.Arn
       InstanceId: !Ref Instanceb
-  
+
   # Lambda function
   EC2IPv6AddressFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.13
+      Runtime: python3.14
       Handler: index.handler
       Role: !GetAtt EC2IPv6AddressRole.Arn
-      Timeout: 30
+      Timeout: 60
       Code:
         ZipFile: |
           import boto3
           import cfnresponse
+          import time
 
           def handler(event, context):
               if event['RequestType'] in ['Create', 'Update']:
                   try:
                       instance_id = event['ResourceProperties']['InstanceId']
-                      
+
                       # Wait for the instance to be fully initialized
                       ec2 = boto3.client('ec2')
-                      
+
                       # Get instance details
                       max_attempts = 10
                       for attempt in range(max_attempts):
                           response = ec2.describe_instances(InstanceIds=[instance_id])
-                          
+
                           # Check if instance has IPv6 addresses
                           if response['Reservations'] and response['Reservations'][0]['Instances']:
                               instance = response['Reservations'][0]['Instances'][0]
-                              
+
                               # Check network interfaces for IPv6 addresses
                               ipv6_addresses = []
                               for network_interface in instance.get('NetworkInterfaces', []):
                                   for ipv6 in network_interface.get('Ipv6Addresses', []):
                                       ipv6_addresses.append(ipv6.get('Ipv6Address'))
-                              
+
                               if ipv6_addresses:
                                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
                                       'IPv6Address': ipv6_addresses[0],
                                       'AllIPv6Addresses': ','.join(ipv6_addresses)
                                   })
                                   return
-                          
+
                           # If we didn't find IPv6 addresses, wait and try again
                           time.sleep(5)
-                      
+
                       # If we get here, we couldn't find IPv6 addresses after all attempts
                       cfnresponse.send(event, context, cfnresponse.FAILED, {
                           'Error': f'Could not retrieve IPv6 address for instance {instance_id} after {max_attempts} attempts'
                       })
-                      
+
                   except Exception as e:
                       cfnresponse.send(event, context, cfnresponse.FAILED, {
                           'Error': str(e)
@@ -545,9 +578,9 @@ Resources:
 
 Outputs:
   Service1DomainName:
-    Type: String
+    Description: VPC Lattice service 1 domain name
     Value: !GetAtt VpcLatticeService1.DnsEntry.DomainName
 
   Service2DomainName:
-    Type: String
+    Description: VPC Lattice service 2 custom domain name
     Value: !Ref Service2CustomDomainName

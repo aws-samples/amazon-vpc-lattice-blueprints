@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: 2010-09-09
 Description: ECR Repository for ECS Application
 
@@ -17,7 +19,7 @@ Outputs:
   ECRRepositoryUri:
     Description: ECR Repository URI
     Value: !GetAtt ECRRepository.RepositoryUri
-  
+
   ECRRepositoryArn:
     Description: ECR Repository ARN
     Value: !GetAtt ECRRepository.Arn

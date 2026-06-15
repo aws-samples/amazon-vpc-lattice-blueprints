@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: 2010-09-09
 Description: AWS Lambda function and VPC Lattice service
 Transform: 'AWS::LanguageExtensions'
@@ -13,14 +15,27 @@ Resources:
     Type: AWS::VpcLattice::Service
     Properties:
       Name: !Sub service-${AWS::StackName}
-      AuthType: NONE
-  
+      AuthType: AWS_IAM
+
+  # Open (allow-all) auth policy
+  VpcLatticeServiceAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeService
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
+
   VpcLatticeServiceServiceAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
     Properties:
       ServiceIdentifier: !Ref VpcLatticeService
       ServiceNetworkIdentifier: !Ref ServiceNetworkId
-  
+
   VpcLatticeServiceHTTPSListener:
     Type: AWS::VpcLattice::Listener
     Properties:
@@ -28,7 +43,7 @@ Resources:
       ServiceIdentifier: !Ref VpcLatticeService
       Port: 443
       Protocol: HTTPS
-      DefaultAction: 
+      DefaultAction:
         Forward:
           TargetGroups:
             - TargetGroupIdentifier: !Ref VpcLatticeTargetGroup
@@ -67,7 +82,7 @@ Resources:
       FunctionName: lambda-vpclattice-target
       Handler: index.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: python3.13
+      Runtime: python3.14
       Code:
         ZipFile: |
           import json
@@ -76,13 +91,13 @@ Resources:
               # Extract the source IP from the request context
               request_context = event.get('requestContext', {})
               source_ip = request_context.get('http', {}).get('sourceIp', 'Unknown')
-              
+
               # Create response with message and request IP
               response_body = {
                   'message': 'Hello from Lambda Function!!',
                   'request_ip': source_ip
               }
-              
+
               return {
                   'statusCode': 200,
                   'headers': {
@@ -102,5 +117,5 @@ Resources:
 
 Outputs:
   ServiceDomainName:
-    Type: String
+    Description: VPC Lattice service domain name
     Value: !GetAtt VpcLatticeService.DnsEntry.DomainName

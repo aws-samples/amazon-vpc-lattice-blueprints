@@ -1,10 +1,10 @@
 # Amazon VPC Lattice - Multi-Account: Centralized Service Network (AWS CloudFormation)
 
-![Centralized Service Network](../../../../images/centralized.png)
+CloudFormation implementation of the Centralized Service Network pattern (three accounts). For the architecture, account structure, and connectivity testing steps, see the [pattern README](../README.md).
 
 ## Prerequisites
 
-- **Three AWS Accounts**: Network account (central), service provider account, and consumer account.
+- **Three AWS Accounts**: Network account (central), provider account, and consumer account.
 - **AWS Organizations**: All accounts must be part of the same AWS Organization.
 - **AWS CLI**: Installed and configured with credentials for each account.
 - **Permissions required** (per account):
@@ -12,36 +12,33 @@
   - VPC Lattice: Service networks, services, target groups.
   - AWS RAM (Resource Access Manager): Create and manage resource shares.
   - AWS Organizations: Read access to describe organization.
-  - EC2: VPC, subnets, instances, security groups (consumer account).
-  - Lambda: Create functions and execution roles (service account).
+  - EC2: VPC, subnets, instances, security groups, VPC endpoints (consumer account).
+  - Lambda: Create functions and execution roles (provider account).
+  - RDS: Aurora cluster + DB subnet group, Secrets Manager-managed secret (provider account).
+  - KMS: Create a customer-managed key for the Aurora secret (provider account).
+  - Secrets Manager: Read the cross-account shared secret (consumer account).
   - IAM: Create roles and policies.
-
-## Architecture Overview
-
-This pattern demonstrates a centralized service network approach where:
-
-- **Network Account (Central)**: Owns and manages the VPC Lattice service network and the services' associations. The service network is shared with the consumers.
-- **Service Provider Account**: Creates VPC Lattice services and shares them with the network account.
-- **Consumer Account**: Associates VPCs to the shared service network to consume services.
 
 ## Deployment Order
 
 > **Important**: Resources must be deployed in a specific order due to cross-account dependencies. Each step must be completed in the specified AWS Account.
 
-### Step 1: Service Provider Account - Deploy VPC Lattice Service
+### Step 1: Provider Account - Deploy the Service and Aurora Resource Configuration
 
-**AWS Account**: Service Provider Account
+**AWS Account**: Provider Account
 
-Deploy the Lambda function and VPC Lattice service:
+Deploy the Lambda + VPC Lattice service and the provider VPC hosting Aurora + the resource gateway + resource configuration (both are shared via one RAM share):
+
+> **Note**: this stack provisions an Aurora cluster, so it takes several minutes longer than the others.
 
 ```bash
-# Configure AWS credentials for service provider account
-export AWS_PROFILE=service-provider
+# Configure AWS credentials for the provider account
+export AWS_PROFILE=provider-account
 
 # Deploy the service
 aws cloudformation deploy \
-  --template-file service-account.yaml \
-  --stack-name vpclattice-centralized-service \
+  --template-file provider-account.yaml \
+  --stack-name vpclattice-centralized-provider \
   --capabilities CAPABILITY_NAMED_IAM \
   --region eu-west-1
 ```
@@ -78,8 +75,11 @@ export AWS_PROFILE=consumer-account
 aws cloudformation deploy \
   --template-file consumer-account.yaml \
   --stack-name vpclattice-centralized-consumer \
+  --capabilities CAPABILITY_IAM \
   --region eu-west-1
 ```
+
+> **Note**: The consumer EC2 instances are deployed across all the Availability Zones configured for the consumer VPC, and resources are deployed across multiple accounts. Keep this in mind when testing this environment from a cost perspective - for production environments, we recommend the use of at least 2 AZs for high-availability.
 
 ## Cleanup
 
@@ -101,20 +101,30 @@ aws cloudformation delete-stack --stack-name vpclattice-centralized-service-netw
 aws cloudformation wait stack-delete-complete --stack-name vpclattice-centralized-service-network --region eu-west-1
 ```
 
-### Step 3: Service Provider Account
+### Step 3: Provider Account
 
 ```bash
-export AWS_PROFILE=service-provider
-aws cloudformation delete-stack --stack-name vpclattice-centralized-service --region eu-west-1
-aws cloudformation wait stack-delete-complete --stack-name vpclattice-centralized-service --region eu-west-1
+export AWS_PROFILE=provider-account
+aws cloudformation delete-stack --stack-name vpclattice-centralized-provider --region eu-west-1
+aws cloudformation wait stack-delete-complete --stack-name vpclattice-centralized-provider --region eu-west-1
 ```
 
-## Next Steps
+> **Note**: The access-logging CloudWatch Logs log group (`/aws/vpclattice/<stack-name>`) is part of the **Network Account** service-network stack (it owns the service network) and is removed when that stack is deleted — no manual cleanup is required.
 
-After successfully deploying this pattern:
+## Observability: Access logging
 
-1. **Test connectivity**: Follow the testing guide to verify the service works correctly.
-2. **Explore distributed pattern**: Try the distributed service networks pattern.
-3. **Advanced architectures**: Explore [Advanced patterns](../../../3-advanced_architectures/) for more complex scenarios.
-4. **Custom domains**: Implement custom domain names with Route 53 Private Hosted Zones (PHZs) and certificates. Implement automated DNS configuration using the [VPC Lattice DNS Guidance](https://aws.amazon.com/solutions/guidance/amazon-vpc-lattice-automated-dns-configuration-on-aws/)
-5. **Authentication**: Add SigV4 authentication policies for enhanced security.
+This pattern enables VPC Lattice **access logging** by default. The **Network Account** owns the service network, so its access log subscription records a log entry for every request that flows through the network and sends it to a CloudWatch Logs log group named `/aws/vpclattice/<stack-name>` (7-day retention), created as part of the service-network stack.
+
+- **Where to find the logs**: in the Network Account, CloudWatch Logs console → **Log groups** → `/aws/vpclattice/<stack-name>`, or from the CLI:
+
+  ```bash
+  aws logs tail /aws/vpclattice/<stack-name> --follow
+  ```
+
+- **How to interpret them**: each entry records one request through the service network (source, target, response code, timing) — useful for observability and, because the service network uses `AWS_IAM` auth, for confirming auth allow/deny decisions.
+
+> **Cost note**: Access logging uses CloudWatch Logs vended-logs pricing (ingestion + storage). For this demo it is a small ongoing cost while the stacks are deployed.
+
+## Testing
+
+After deploying all three accounts, follow the [Testing Connectivity](../README.md#testing-connectivity) steps in the pattern README to connect to a consumer instance and verify cross-account connectivity to the shared service.

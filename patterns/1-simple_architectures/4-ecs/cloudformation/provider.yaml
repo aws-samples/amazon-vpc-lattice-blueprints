@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: 2010-09-09
 Description: Provider VPC, ECS Fargate Cluster, and VPC Lattice service
 Transform: 'AWS::LanguageExtensions'
@@ -32,11 +34,11 @@ Resources:
   # ---------- VPC ----------
   VPC:
     Type: AWS::EC2::VPC
-    Properties: 
+    Properties:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags: 
+      Tags:
         - Key: Name
           Value: !Join
             - '-'
@@ -66,15 +68,15 @@ Resources:
             Properties:
               VpcId: !Ref VPC
               AvailabilityZone: !Sub ${AWS::Region}${AvailabilityZone}
-              CidrBlock: !Select 
+              CidrBlock: !Select
                 - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
-                - !Cidr 
+                - !Cidr
                   - !GetAtt VPC.CidrBlock
                   - 256
                   - 8
-              Ipv6CidrBlock: !Select 
+              Ipv6CidrBlock: !Select
                 - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
-                - !Cidr 
+                - !Cidr
                   - !Select [0, !GetAtt VPC.Ipv6CidrBlocks]
                   - 256
                   - 64
@@ -90,7 +92,7 @@ Resources:
             Type: AWS::EC2::RouteTable
             Properties:
               VpcId: !Ref VPC
-              Tags: 
+              Tags:
                 - Key: Name
                   Value: !Join
                     - '-'
@@ -99,7 +101,7 @@ Resources:
           # Route Table associations
           '${SubnetType}RouteTableAssociation${AvailabilityZone}':
             Type: AWS::EC2::SubnetRouteTableAssociation
-            Properties: 
+            Properties:
               RouteTableId: !Ref
                 'Fn::Sub': '${SubnetType}RouteTable${AvailabilityZone}'
               SubnetId: !Ref
@@ -110,14 +112,27 @@ Resources:
     Type: AWS::VpcLattice::Service
     Properties:
       Name: !Sub service-${AWS::StackName}
-      AuthType: NONE
-  
+      AuthType: AWS_IAM
+
+  # Open (allow-all) auth policy.
+  VpcLatticeServiceAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref VpcLatticeService
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
+
   VpcLatticeServiceNetworkAssociation:
     Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
     Properties:
       ServiceIdentifier: !Ref VpcLatticeService
       ServiceNetworkIdentifier: !Ref ServiceNetworkId
-  
+
   VpcLatticeServiceHTTPSListener:
     Type: AWS::VpcLattice::Listener
     Properties:
@@ -125,7 +140,7 @@ Resources:
       ServiceIdentifier: !Ref VpcLatticeService
       Port: 443
       Protocol: HTTPS
-      DefaultAction: 
+      DefaultAction:
         Forward:
           TargetGroups:
             - TargetGroupIdentifier: !Ref VpcLatticeTargetGroup
@@ -137,7 +152,7 @@ Resources:
     Properties:
       Name: ecs-target-group
       Type: IP
-      Config: 
+      Config:
         IpAddressType: IPV4
         Port: 80
         Protocol: HTTP
@@ -270,7 +285,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub provider-ecs-tasks-sg-${AWS::StackName}
+          Value: !Sub provider-vpc-ecs-tasks-security-group-${AWS::StackName}
 
   ECSTaskSecurityGroupIngressHTTPIPv4:
     Type: AWS::EC2::SecurityGroupIngress
@@ -327,7 +342,7 @@ Resources:
       Description: Allowing all egress (IPv6)
       IpProtocol: -1
       CidrIpv6: ::/0
-  
+
   # Security Group for VPC Endpoints
   VpcEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -336,7 +351,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub provider-vpc-endpoints-sg-${AWS::StackName}
+          Value: !Sub provider-vpc-endpoints-security-group-${AWS::StackName}
 
   VpcEndpointSecurityGroupIngressHTTPS:
     Type: AWS::EC2::SecurityGroupIngress
@@ -408,22 +423,23 @@ Resources:
     Type: Custom::PrefixListLookup
     Properties:
       ServiceToken: !GetAtt PrefixListLookupFunction.Arn
-      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.vpc-lattice" 
+      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.vpc-lattice"
 
   # VPC Lattice IPv6
   VpcLatticePrefixListIpv6:
     Type: Custom::PrefixListLookup
     Properties:
       ServiceToken: !GetAtt PrefixListLookupFunction.Arn
-      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.ipv6.vpc-lattice" 
-  
+      PrefixListName: !Sub "com.amazonaws.${AWS::Region}.ipv6.vpc-lattice"
+
   # AWS Lambda function
   PrefixListLookupFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.13
+      Runtime: python3.14
       Handler: index.handler
       Role: !GetAtt PrefixListLookupRole.Arn
+      Timeout: 30
       Code:
         ZipFile: |
           import boto3
@@ -434,25 +450,25 @@ Resources:
               try:
                 ec2 = boto3.client('ec2')
                 prefix_list_name = event['ResourceProperties']['PrefixListName']
-                
+
                 # Get all managed prefix lists
                 response = ec2.describe_managed_prefix_lists(
                   Filters=[{'Name': 'prefix-list-name', 'Values': [prefix_list_name]}]
                 )
-                
+
                 if response['PrefixLists']:
                   prefix_list_id = response['PrefixLists'][0]['PrefixListId']
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, 
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS,
                                   {'PrefixListId': prefix_list_id})
                 else:
-                  cfnresponse.send(event, context, cfnresponse.FAILED, 
+                  cfnresponse.send(event, context, cfnresponse.FAILED,
                                   {'Error': f'Prefix list {prefix_list_name} not found'})
               except Exception as e:
-                cfnresponse.send(event, context, cfnresponse.FAILED, 
+                cfnresponse.send(event, context, cfnresponse.FAILED,
                                 {'Error': str(e)})
             else:  # Delete
               cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-    
+
   # IAM role for the Lambda function
   PrefixListLookupRole:
     Type: AWS::IAM::Role
@@ -476,7 +492,7 @@ Resources:
                   - ec2:DescribeManagedPrefixLists
                 Resource: '*'
 
-Outputs:  
+Outputs:
   VpcLatticeServiceDomainName:
     Description: VPC Lattice service domain name
     Value: !GetAtt VpcLatticeService.DnsEntry.DomainName
