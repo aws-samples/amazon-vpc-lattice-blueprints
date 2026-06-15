@@ -51,7 +51,7 @@ Pin your local tools to the versions CI uses so local results match CI. `cfn-lin
 | [`pre-commit`](https://pre-commit.com/#install) | >= 3.5.0 | The hook runner itself | `pip install pre-commit` (or `brew install pre-commit`) |
 | [Terraform](https://developer.hashicorp.com/terraform/install) | CI uses `1.9.8`; configs require `>= 1.3.0` | `terraform fmt` / `terraform validate` | Official installer, or `brew install terraform` |
 | [tflint](https://github.com/terraform-linters/tflint) | CI uses `v0.53.0` (AWS ruleset `0.31.0`, pinned in [`.tflint.hcl`](.tflint.hcl)) | Terraform lint (AWS ruleset) | `brew install tflint`, or see the [install docs](https://github.com/terraform-linters/tflint#installation) |
-| [terraform-docs](https://terraform-docs.io/user-guide/installation/) | CI uses `v0.19.0` (local `v0.21.0` also works) | Generated-README drift check | `brew install terraform-docs` |
+| [terraform-docs](https://terraform-docs.io/user-guide/installation/) | CI uses `v0.21.0` | Generated-README drift check | `brew install terraform-docs` |
 | [cfn-lint](https://github.com/aws-cloudformation/cfn-lint) | `1.51.4` | CloudFormation lint (standalone use; otherwise auto-installed by pre-commit) | `pip install "cfn-lint==1.51.4"` |
 | [checkov](https://www.checkov.io/2.Basics/Installing%20Checkov.html) | `~3.2.x` (pre-commit pins `3.2.530`) | Static IaC security scan (standalone use; otherwise auto-installed by pre-commit) | `pip install checkov` |
 | [lychee](https://github.com/lycheeverse/lychee) | latest | Markdown link check (required by the local `lychee` hook) | `brew install lychee`, or `cargo install lychee` |
