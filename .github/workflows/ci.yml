@@ -3,12 +3,6 @@
 #
 # Static-only CI for Amazon VPC Lattice Blueprints.
 #
-# This workflow performs static validation ONLY. It never runs `terraform apply`,
-# never deploys CloudFormation, never configures AWS credentials, and never
-# provisions billable resources. Terraform validation uses
-# `terraform init -backend=false` so no remote state backend or credentials are
-# required.
-#
 # CI <-> pre-commit lockstep: the checks, tools, and pinned versions in this
 # workflow must stay in step with .pre-commit-config.yaml. A change to one
 # (adding/removing a check, bumping a tool version) MUST be mirrored in the other
@@ -35,14 +29,10 @@ name: CI
 
 on:
   pull_request:
-  push:
     branches:
       - main
-      - v1-release
   workflow_dispatch:
 
-# Static analysis only — no AWS access is ever needed. Keep the default token
-# permissions read-only.
 permissions:
   contents: read
 
@@ -396,3 +386,43 @@ jobs:
           # + per-check output is what surfaces in the job log.
           output_format: cli
           quiet: true
+
+  # ===========================================================================
+  # ci-passed: single aggregator gate.
+  #
+  # This job depends on every other job and succeeds only if none of them
+  # failed/were cancelled. Use the configure only this check ("CI passed") 
+  # in the branch protection.
+  #
+  # Maintenance: if you add a new TOP-LEVEL job to this workflow, add it to the
+  # `needs` list below so it is included in the gate.
+  # ===========================================================================
+  ci-passed:
+    name: CI passed
+    runs-on: ubuntu-latest
+    # Run even when an upstream job fails so we can evaluate results explicitly
+    # (without `always()`, this job would be skipped on failure, which produces
+    # a confusing "skipped required check" state in the ruleset).
+    if: always()
+    needs:
+      - discover
+      - fmt
+      - terraform-checks
+      - tflint
+      - cfn-lint
+      - terraform-docs
+      - markdown-links
+      - checkov
+    steps:
+      - name: Verify all required jobs succeeded
+        shell: bash
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "Upstream job results: ${results}"
+          for r in ${results}; do
+            if [ "${r}" = "failure" ] || [ "${r}" = "cancelled" ]; then
+              echo "::error title=CI passed::A required CI job did not pass (result: ${r}). See the failed job above."
+              exit 1
+            fi
+          done
+          echo "All required CI jobs passed."

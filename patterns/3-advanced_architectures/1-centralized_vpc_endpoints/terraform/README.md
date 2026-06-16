@@ -79,8 +79,8 @@ After deployment, follow the [Testing Connectivity](../README.md#testing-connect
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.50.0 |
-| <a name="provider_awscc"></a> [awscc](#provider\_awscc) | 1.88.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.50.0 |
+| <a name="provider_awscc"></a> [awscc](#provider\_awscc) | >= 1.67.0 |
 
 ## Modules
 
