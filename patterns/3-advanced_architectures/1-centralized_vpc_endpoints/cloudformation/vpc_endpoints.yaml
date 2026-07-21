@@ -154,9 +154,21 @@ Resources:
         - !Ref RGWSubnetb
       VpcIdentifier: !Ref VPC
 
+  # ---------- RESOURCE CONFIGURATION (GROUP) ----------
+  ResourceConfigurationGroup:
+    Type: AWS::VpcLattice::ResourceConfiguration
+    Properties:
+      Name: resource-config-group-vpcendpoints
+      ResourceGatewayId: !Ref ResourceGateway
+      PortRanges:
+        - 443
+      ProtocolType: TCP
+      ResourceConfigurationType: GROUP
+      GroupDomain: !Sub '${AWS::Region}.amazonaws.com'
+  
   # ---------- VPC ENDPOINTS & RESOURCE CONFIGURATIONS ----------
   # For::Each iteration: per VPC endpoint type (ssm, ssmmessages, ec2messages, sts)
-  # Resources to create: 4 VPC endpoints, 4 Resource Configurations
+  # Resources to create: 4 VPC endpoints, 4 CHILD Resource Configurations (members of the group)
   'Fn::ForEach::EndpointTypes':
     - EndpointType
     - [ssm, ssmmessages, ec2messages, sts]
@@ -177,23 +189,15 @@ Resources:
         Type: AWS::VpcLattice::ResourceConfiguration
         Properties:
           Name: !Sub 'resource-config-${EndpointType}'
+          ResourceConfigurationGroupId: !GetAtt ResourceConfigurationGroup.Id
           CustomDomainName: !Sub '${EndpointType}.${AWS::Region}.amazonaws.com'
-          PortRanges:
-            - 443
-          ProtocolType: TCP
           ResourceConfigurationDefinition:
             DnsResource:
               DomainName: !Sub '${EndpointType}.${AWS::Region}.amazonaws.com'
               IpAddressType: IPV4
-          ResourceConfigurationType: SINGLE
-          ResourceGatewayId: !Ref ResourceGateway
+          ResourceConfigurationType: CHILD
 
 Outputs:
-  ssmResourceConfiguration:
-    Value: !GetAtt ssmResourceConfiguration.Id
-  ssmmessagesResourceConfiguration:
-    Value: !GetAtt ssmmessagesResourceConfiguration.Id
-  ec2messagesResourceConfiguration:
-    Value: !GetAtt ec2messagesResourceConfiguration.Id
-  stsResourceConfiguration:
-    Value: !GetAtt stsResourceConfiguration.Id
+  ResourceConfigurationGroup:
+    Description: Group resource configuration ID (associate this to the service network)
+    Value: !GetAtt ResourceConfigurationGroup.Id
