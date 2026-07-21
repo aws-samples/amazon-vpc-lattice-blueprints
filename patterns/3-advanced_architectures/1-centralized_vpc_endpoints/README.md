@@ -4,7 +4,7 @@ This pattern centralizes interface VPC endpoints in a shared **endpoints VPC** a
 
 ![Centralized VPC endpoints](../../../images/pattern3_architecture1.png)
 
-Each AWS service endpoint is fronted by a resource configuration with a **custom domain name** (e.g. `ssm.<region>.amazonaws.com`). Controlled private DNS on the consumer VPC association (scoped to `*.amazonaws.com` only) makes the consumer's normal `ssm.<region>.amazonaws.com` lookup resolve to a VPC Lattice managed address (`129.224.0.x/17`) and route to the central endpoint, with no client configuration changes.
+Each AWS service endpoint is modeled as a **child resource configuration** grouped under a single **group resource configuration**, each with a **custom domain name** (e.g. `ssm.<region>.amazonaws.com`). Controlled private DNS on the consumer VPC association (scoped to `*.amazonaws.com` only) makes the consumer's normal `ssm.<region>.amazonaws.com` lookup resolve to a VPC Lattice managed address (`129.224.0.x/17`) and route to the central endpoint, with no client configuration changes.
 
 ## Why centralize, and why with VPC Lattice
 
@@ -24,8 +24,8 @@ Each AWS service endpoint is fronted by a resource configuration with a **custom
 | **Consumer VPC** (`10.0.0.0/16`) | EC2 instances (1 per AZ) consuming AWS services through the centralized endpoints; associated to the service network |
 | **VPC Lattice service network** | Service network connecting the consumer VPC to the centralized endpoints |
 | **Resource gateway** | Dual-stack resource gateway in the endpoints VPC enabling VPC Lattice to route to the endpoints |
-| **Resource configurations** | One configuration per endpoint, each with a custom `*.amazonaws.com` domain name |
-| **Resource associations** | One association per configuration to the service network, with private DNS resolution |
+| **Resource configurations** | A group resource configuration (group domain `<region>.amazonaws.com`) plus one child configuration per endpoint, each with a custom `*.amazonaws.com` domain name |
+| **Resource association** | A single association of the group resource configuration to the service network, with private DNS resolution (all child endpoints are reachable through it) |
 | **Access logging** | A CloudWatch Logs log group (`/aws/vpclattice/<identifier>`) and an access log subscription at the service-network scope |
 
 ## VPC Lattice resource configuration
@@ -34,12 +34,28 @@ This pattern uses VPC Lattice **VPC Resources** (not a service with listeners/ta
 
 | Aspect | Configuration |
 |--------|---------------|
-| **Construct** | Resource gateway + resource configurations + resource associations |
+| **Construct** | Resource gateway + group/child resource configurations + a single group resource association |
 | **Custom Domain Name** | ✅ Yes (`<service>.<region>.amazonaws.com` per endpoint) |
 | **Protocol / Port** | TCP on port 443 |
 | **Private DNS** | ✅ Enabled, scoped to `*.amazonaws.com` only (`SPECIFIED_DOMAINS_ONLY`) |
 | **Resolved address** | VPC Lattice VPC-resource range `129.224.0.x/17` (IPv6 `fd00:ec2:80::/64`) |
 | **Targets** | Centralized interface VPC endpoints in the endpoints VPC |
+
+## Grouping the endpoints under one resource configuration
+
+Each centralized endpoint is a **child** resource configuration that belongs to one **group** resource configuration. The group defines a *group domain* (`<region>.amazonaws.com`), and every child's custom domain (`<service>.<region>.amazonaws.com`) is a subdomain of it. Only the **group** is associated to the service network — a child can't be associated on its own; it becomes reachable automatically as a member of the group.
+
+**Why group them**
+
+- **Adding endpoints at scale is a single step.** To centralize another AWS service you add one child resource configuration — no new service-network association is needed, because the existing group association already covers it. The "add an endpoint" change stays small and uniform as the list grows.
+- **Fewer billed associations.** As a service network owner you are billed hourly for each resource configuration *associated* to the service network. With the group model only the group is associated (one association) no matter how many endpoints you centralize, instead of one association per endpoint. (Data-processing charges still apply per traffic.)
+- **Simpler DNS scoping.** One group domain covers every child, so the consumer's `*.amazonaws.com` private DNS scoping and the single group association carry all endpoints.
+
+**Limitations and things to watch**
+
+- **Quotas.** VPC Lattice enforces quotas on child resource configurations per group, resource configurations associated per service network, and resource configurations per Region, among others. Keep these in mind before scaling the endpoint list, and review the current values in the [VPC Lattice quotas](https://docs.aws.amazon.com/vpc-lattice/latest/ug/quotas.html) documentation.
+- **Child domains must be subdomains of the group domain.** The group domain here is `<region>.amazonaws.com`, so only endpoints whose DNS name ends in `.<region>.amazonaws.com` (e.g. `ssm.<region>.amazonaws.com`) can be children and get a VPC Lattice-managed private hosted zone in the consumer VPC. If a child's custom domain isn't a subdomain of the group domain, VPC Lattice won't provision a private hosted zone for it.
+- **Endpoints that don't follow the standard naming must live outside the group.** Some AWS services publish endpoints that are not subdomains of `<region>.amazonaws.com` (for example endpoints under `*.api.aws`, or global endpoints without the regional suffix). These can't be children of this group — model them as separate **`SINGLE`** resource configurations with their own custom domain and their own service-network association, and add the domain to the consumer's private DNS scoping.
 
 ## Implementation
 

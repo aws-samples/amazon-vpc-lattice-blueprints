@@ -110,6 +110,7 @@ After deployment, follow the [Testing Connectivity](../README.md#testing-connect
 | [aws_vpclattice_resource_gateway.resource_gateway](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpclattice_resource_gateway) | resource |
 | [aws_vpclattice_service_network.service_network](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpclattice_service_network) | resource |
 | [awscc_vpclattice_resource_configuration.resource_configuration](https://registry.terraform.io/providers/hashicorp/awscc/latest/docs/resources/vpclattice_resource_configuration) | resource |
+| [awscc_vpclattice_resource_configuration.resource_configuration_group_vpcendpoints](https://registry.terraform.io/providers/hashicorp/awscc/latest/docs/resources/vpclattice_resource_configuration) | resource |
 | [awscc_vpclattice_service_network_resource_association.resource_association](https://registry.terraform.io/providers/hashicorp/awscc/latest/docs/resources/vpclattice_service_network_resource_association) | resource |
 | [awscc_vpclattice_service_network_vpc_association.service_network_vpc_association](https://registry.terraform.io/providers/hashicorp/awscc/latest/docs/resources/vpclattice_service_network_vpc_association) | resource |
 | [aws_ami.amazon_linux](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ami) | data source |

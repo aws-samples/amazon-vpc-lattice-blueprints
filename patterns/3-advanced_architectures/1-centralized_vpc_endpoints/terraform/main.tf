@@ -23,37 +23,43 @@ resource "aws_vpclattice_access_log_subscription" "service_network_access_logs" 
 }
 
 # ---------- RESOURCE CONFIGURATIONS AND SERVICE NETWORK ASSOCIATION ----------
+# Resource Configuration (Group)
+resource "awscc_vpclattice_resource_configuration" "resource_configuration_group_vpcendpoints" {
+  name                        = "resource-config-group-vpcendpoints"
+  resource_gateway_id         = aws_vpclattice_resource_gateway.resource_gateway.id
+  port_ranges                 = ["443"]
+  protocol_type               = "TCP"
+  resource_configuration_type = "GROUP"
+  group_domain                = "${var.aws_region}.amazonaws.com"
+}
+
+# Resource association (to service network)
+resource "awscc_vpclattice_service_network_resource_association" "resource_association" {
+  private_dns_enabled       = true
+  resource_configuration_id = split("/", awscc_vpclattice_resource_configuration.resource_configuration_group_vpcendpoints.id)[1]
+  service_network_id        = aws_vpclattice_service_network.service_network.id
+
+  tags = [{
+    key   = "Name"
+    value = "resource-association-${var.identifier}"
+  }]
+}
+
 # Resource configuration (1 per endpoint)
 resource "awscc_vpclattice_resource_configuration" "resource_configuration" {
   for_each = toset(var.vpc_endpoints)
 
-  name                = "resource-config-${each.value}-${var.identifier}"
-  port_ranges         = ["443"]
-  protocol_type       = "TCP"
-  resource_gateway_id = aws_vpclattice_resource_gateway.resource_gateway.id
-  custom_domain_name  = "${each.value}.${var.aws_region}.amazonaws.com"
+  name                            = "resource-config-${each.value}-${var.identifier}"
+  resource_configuration_group_id = split("/", awscc_vpclattice_resource_configuration.resource_configuration_group_vpcendpoints.id)[1]
+  custom_domain_name              = "${each.value}.${var.aws_region}.amazonaws.com"
 
-  resource_configuration_type = "SINGLE"
+  resource_configuration_type = "CHILD"
   resource_configuration_definition = {
     dns_resource = {
       domain_name     = "${each.value}.${var.aws_region}.amazonaws.com"
       ip_address_type = "IPV4"
     }
   }
-}
-
-# Resource association (to service network)
-resource "awscc_vpclattice_service_network_resource_association" "resource_association" {
-  for_each = toset(var.vpc_endpoints)
-
-  private_dns_enabled       = true
-  resource_configuration_id = awscc_vpclattice_resource_configuration.resource_configuration[each.value].resource_configuration_id
-  service_network_id        = aws_vpclattice_service_network.service_network.id
-
-  tags = [{
-    key   = "Name"
-    value = "resource-association-${each.value}-${var.identifier}"
-  }]
 }
 
 # ---------- CENTRAL VPC ENDPOINTS ----------

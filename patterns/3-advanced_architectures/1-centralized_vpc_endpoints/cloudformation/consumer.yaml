@@ -8,18 +8,9 @@ Parameters:
   LatestAmiId:
     Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
     Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-  ssmResourceConfiguration:
+  ResourceConfigurationGroup:
     Type: String
-    Description: Resource Configuration for ssm endpoint
-  ssmmessagesResourceConfiguration:
-    Type: String
-    Description: Resource Configuration for ssmmessages endpoint
-  ec2messagesResourceConfiguration:
-    Type: String
-    Description: Resource Configuration for ec2messages endpoint
-  stsResourceConfiguration:
-    Type: String
-    Description: Resource Configuration for sts endpoint
+    Description: Group resource configuration ID for the centralized VPC endpoints
 
 Mappings:
   SubnetToIndex:
@@ -182,18 +173,13 @@ Resources:
       ServiceNetworkIdentifier: !Ref VpcLatticeServiceNetwork
       VpcIdentifier: !Ref VPC
 
-  # For::Each iteration: per VPC endpoint type (ssm, ssmmessages, ec2messages, sts)
-  # Resources to create: 4 Resource Configuration associations
-  'Fn::ForEach::EndpointTypes':
-    - EndpointType
-    - [ssm, ssmmessages, ec2messages, sts]
-    - '${EndpointType}ResourceAssociation':
-        Type: AWS::VpcLattice::ServiceNetworkResourceAssociation
-        Properties:
-          PrivateDnsEnabled: true
-          ResourceConfigurationId: !Ref
-            'Fn::Sub': '${EndpointType}ResourceConfiguration'
-          ServiceNetworkId: !Ref VpcLatticeServiceNetwork
+  # Group resource configuration association to the service network.
+  ResourceAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkResourceAssociation
+    Properties:
+      PrivateDnsEnabled: true
+      ResourceConfigurationId: !Ref ResourceConfigurationGroup
+      ServiceNetworkId: !Ref VpcLatticeServiceNetwork
 
   # ---------- IAM ROLE (EC2 INSTANCE) ----------
   EC2InstanceRole:
