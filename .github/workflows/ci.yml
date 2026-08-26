@@ -20,6 +20,8 @@
 #   * markdown-links    - repository markdown link check (lychee).
 #   * checkov           - IaC security scan over patterns/, using `.checkov.yaml`
 #                         (the committed, tunable baseline).
+#   * skill-package     - agent skill frontmatter, path, manifest snapshot, and
+#                         evaluation-corpus validation.
 #
 # Action versions are pinned to specific majors. Explicit failure annotations
 # (GitHub `::error` workflow commands naming the pattern path + check) mean a
@@ -388,10 +390,28 @@ jobs:
           quiet: true
 
   # ===========================================================================
+  # skill-package: static validation of the agent skill package under
+  # skills/vpc-lattice-blueprints/ (SKILL.md frontmatter rules, referenced-path
+  # existence, assets/blueprint.yaml snapshot sync with the canonical root
+  # blueprint.yaml, evals.json structure). Stdlib-only Python, no credentials.
+  # Mirrors the `skill-package-validate` pre-commit hook (lockstep rule above).
+  # ===========================================================================
+  skill-package:
+    name: Agent skill package validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate skill package
+        shell: bash
+        run: python3 skills/vpc-lattice-blueprints/scripts/validate-package.py
+
+  # ===========================================================================
   # ci-passed: single aggregator gate.
   #
   # This job depends on every other job and succeeds only if none of them
-  # failed/were cancelled. Use the configure only this check ("CI passed") 
+  # failed/were cancelled. Use the configure only this check ("CI passed")
   # in the branch protection.
   #
   # Maintenance: if you add a new TOP-LEVEL job to this workflow, add it to the
@@ -413,6 +433,7 @@ jobs:
       - terraform-docs
       - markdown-links
       - checkov
+      - skill-package
     steps:
       - name: Verify all required jobs succeeded
         shell: bash
