@@ -136,6 +136,25 @@ repos:
           - "200,206,429"
 
   # ---------------------------------------------------------------------------
+  # Agent skill package validation -> mirrors CI `skill-package` job.
+  #
+  # Static, stdlib-only checks on skills/vpc-lattice-blueprints/: SKILL.md
+  # frontmatter rules, referenced-path existence, assets/blueprint.yaml
+  # snapshot sync with the canonical root blueprint.yaml, and evals.json
+  # structure. Triggers on package changes AND on the canonical manifest,
+  # so manifest edits that would strand the snapshot fail locally too.
+  # ---------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: skill-package-validate
+        name: Agent skill package validation
+        description: Validate the vpc-lattice-blueprints skill package (frontmatter, paths, snapshot sync, evals structure). Mirrors CI.
+        entry: python3 skills/vpc-lattice-blueprints/scripts/validate-package.py
+        language: system
+        files: ^(skills/vpc-lattice-blueprints/|blueprint\.yaml$)
+        pass_filenames: false
+
+  # ---------------------------------------------------------------------------
   # General hygiene hooks (pre-commit/pre-commit-hooks).
   # ---------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks

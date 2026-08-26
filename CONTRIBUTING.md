@@ -81,13 +81,14 @@ pre-commit run terraform_validate --all-files  # init -backend=false + validate
 pre-commit run terraform_tflint --all-files    # tflint (AWS ruleset)
 pre-commit run terraform_docs --all-files      # generated-README drift
 pre-commit run cfn-lint --all-files            # CloudFormation lint
-pre-commit run checkov --all-files             # security scan
-pre-commit run lychee --all-files              # markdown link check
+pre-commit run checkov --all-files                # security scan
+pre-commit run lychee --all-files                 # markdown link check
+pre-commit run skill-package-validate --all-files # agent skill package validation
 ```
 
 ### Keeping CI and pre-commit in lockstep
 
-The local pre-commit setup and CI are intentionally two views of the **same** static checks. [`.pre-commit-config.yaml`](.pre-commit-config.yaml) and [`.github/workflows/ci.yml`](.github/workflows/ci.yml) are meant to mirror each other: the same checks (`terraform fmt`, `terraform validate`, `tflint`, `terraform-docs` drift, `cfn-lint`, `checkov`, and the markdown link check), run with the same tools, pinned to the same versions. This is what lets `pre-commit run --all-files` predict the CI result.
+The local pre-commit setup and CI are intentionally two views of the **same** static checks. [`.pre-commit-config.yaml`](.pre-commit-config.yaml) and [`.github/workflows/ci.yml`](.github/workflows/ci.yml) are meant to mirror each other: the same checks (`terraform fmt`, `terraform validate`, `tflint`, `terraform-docs` drift, `cfn-lint`, `checkov`, the markdown link check, and agent skill package validation), run with the same tools, pinned to the same versions. This is what lets `pre-commit run --all-files` predict the CI result.
 
 **Maintenance expectation (checked in review):** when you change one side, you MUST make the equivalent change on the other so local and CI stay consistent. For example:
 
