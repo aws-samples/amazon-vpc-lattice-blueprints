@@ -1,6 +1,9 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
      SPDX-License-Identifier: MIT-0 -->
 
+> [!WARNING]
+> **Deprecated as the primary format.** This single-file skill is superseded by the installable agent skill package at [`skills/vpc-lattice-blueprints/`](./skills/vpc-lattice-blueprints/) — YAML frontmatter for automatic activation, on-demand reference files, and a bundled catalog snapshot for standalone installs (see the [package README](./skills/vpc-lattice-blueprints/README.md)). This file remains functional for pasted-context use during the migration; new installations should use the package.
+
 # VPC Lattice Skill
 
 > **Purpose.** This file is written for an **AI agent**, not (primarily) for a human. Drop it into your agent's context (as a system/skill file, a retrieved document, or pasted reference) so the agent can (1) reason correctly about **Amazon VPC Lattice** and (2) use the **Amazon VPC Lattice Blueprints** repository to build proof-of-concepts and architect real use cases. The human-facing overview lives in [`README.md`](./README.md); the machine-readable pattern catalog lives in [`blueprint.yaml`](./blueprint.yaml).
@@ -24,9 +27,9 @@ Treat [`blueprint.yaml`](./blueprint.yaml) as the **source of truth for what exi
 
 Amazon VPC Lattice is a **fully managed application networking service** that connects, secures, and monitors **service-to-service** communication across VPCs and AWS accounts, without you running load balancers, proxies, sidecars, or NAT, and without any IP-level connectivity.
 
-The key mental shift: with VPC Lattice you stop thinking about **network reachability** (routes, CIDRs, peering) and start thinking about **services and who may call them**. VPC Lattice brokers the traffic. A consumer resolves a service's DNS name to a **link-local address** (IPv4 `169.254.171.x/24`, IPv6 `fd00:ec2:80::/64`) and VPC Lattice handles getting the request to a healthy target, applying authorization and logging along the way. Because the address a consumer talks to is link-local (not an address inside either VPC), **the consumer and provider VPCs never exchange routes and their CIDRs can fully overlap.**
+The key mental shift: with VPC Lattice you stop thinking about **network reachability** (routes, CIDRs, peering) and start thinking about **services and who may call them**. VPC Lattice brokers the traffic. A consumer resolves a service's DNS name to a **link-local address** (IPv4 `169.254.171.0/24`, IPv6 `fd00:ec2:80::/64`) and VPC Lattice handles getting the request to a healthy target, applying authorization and logging along the way. Because the address a consumer talks to is link-local (not an address inside either VPC), **the consumer and provider VPCs never exchange routes and their CIDRs can fully overlap.**
 
-VPC Lattice isn't only for HTTP services. It also brokers **raw TCP** to **VPC resources** — native AWS resources (such as an **Amazon RDS / Aurora** database), domain names, or IP addresses living in another VPC or account. A **resource gateway** provides the data-path ingress into the resource's VPC and a **resource configuration** declares the resource; consumers reach it through the same service network. Reaching a VPC resource uses VPC Lattice-managed addresses from the **`129.224.0.x/17`** range (the addresses the VPC association uses for resource access) rather than the link-local services range, and — unlike a service — a VPC resource is **not** governed by the service network's auth policy.
+VPC Lattice isn't only for HTTP services. It also brokers **raw TCP** to **VPC resources** — native AWS resources (such as an **Amazon RDS / Aurora** database), domain names, or IP addresses living in another VPC or account. A **resource gateway** provides the data-path ingress into the resource's VPC and a **resource configuration** declares the resource; consumers reach it through the same service network. Reaching a VPC resource uses VPC Lattice-managed addresses from the **`129.224.0.0/17`** range (the addresses the VPC association uses for resource access) rather than the link-local services range, and — unlike a service — a VPC resource is **not** governed by the service network's auth policy.
 
 ---
 
@@ -36,7 +39,7 @@ Learn these seven constructs; almost every VPC Lattice design is a composition o
 
 - **Service network** — the top-level logical boundary. A collection of services plus the VPCs (and accounts) allowed to reach them. Access control (auth policy) and observability (access logs) attach here at the network scope. Shareable across accounts via AWS RAM. A given **service or resource configuration can be associated to more than one service network**, so you can run **multiple service networks for segmentation** (per environment, tenant, or trust domain) — which is also what makes distributed, multi-owner topologies possible.
 - **Service** — an application/microservice you expose. It gets a Lattice-generated DNS name (or a custom domain name) and contains listeners + target groups. A service is made reachable by a **service association** to a service network.
-- **Listener** — how a service accepts requests. Protocols: **HTTP, HTTPS, gRPC, and TLS pass-through**. For HTTPS on the generated FQDN, Lattice manages the TLS certificate; for a custom domain you bring an ACM certificate. Listener and target protocols need not match.
+- **Listener** — how a service accepts requests. Protocols: **HTTP, HTTPS, and TLS pass-through**. gRPC uses an **HTTPS listener** with the gRPC target-group protocol version. For HTTPS on the generated FQDN, Lattice manages the TLS certificate; for a custom domain you bring an ACM certificate. Listener and target protocols need not match.
 - **Target group** — where a listener routes traffic. Target types:
   - **INSTANCE** — EC2 instances by instance ID (also how Auto Scaling groups register).
   - **IP** — IP targets inside a VPC CIDR; this is how **ECS tasks** and **EKS pods** are reached (EKS via the AWS Gateway API Controller). Cannot be VPC endpoints or publicly routable IPs.
@@ -44,10 +47,10 @@ Learn these seven constructs; almost every VPC Lattice design is a composition o
   - **ALB** — front an existing Application Load Balancer.
 - **VPC association** — associates a *consumer* VPC with a service network so workloads in that VPC can call the network's services. VPC Lattice provisions the needed data-path infrastructure; scope is limited to that VPC. A VPC can have **only one** direct service-network association (a service network VPC endpoint can attach it to additional networks).
 - **VPC resources (resource gateway + resource configuration)** — the **raw TCP** path, for backends that aren't HTTP services (e.g. an **Amazon RDS / Aurora** database). It has its own constructs:
-  - **Resource gateway** — the dual-stack data-path ingress into the *provider* VPC that fronts the resource; it has security groups and lives in dedicated subnets.
+  - **Resource gateway** — the data-path ingress into the *provider* VPC that fronts the resource; it has security groups and uses selected subnets. It can use IPv4, IPv6, or dual-stack addresses when the subnets and resource support the selected type. The repository patterns use dedicated subnets, but the service does not require them.
   - **Resource configuration** — declares the resource behind the gateway. Identified by an **ARN** (AWS-provisioned resources like RDS), a **domain name**, or an **IP** (IPv4/IPv6 in the VPC); types are `SINGLE`, `GROUP`, `CHILD`, or `ARN`. The `Name` is capped at 40 characters (hence the `resource-config-…` naming).
   - **Resource association** — attaches a resource configuration to a service network (the resource-side equivalent of a service association), optionally with private DNS so the resource's endpoint resolves from consumer VPCs.
-  - Reaching a VPC resource uses VPC Lattice-managed addresses from the **`129.224.0.x/17`** range — the addresses the VPC association uses for resource access — as opposed to the link-local **`169.254.171.x/24`** range used for services (IPv6 `fd00:ec2:80::/64` for both). A resource configuration is shareable cross-account via **AWS RAM**, and a service-network **auth policy does not apply to it** (auth policies govern services only).
+  - Reaching a VPC resource uses VPC Lattice-managed addresses from the **`129.224.0.0/17`** range — the addresses the VPC association uses for resource access — as opposed to the link-local **`169.254.171.0/24`** range used for services (IPv6 `fd00:ec2:80::/64` for both). A resource configuration is shareable cross-account via **AWS RAM**, and a service-network **auth policy does not apply to it** (auth policies govern services only).
 - **Service network VPC endpoint** — a VPC endpoint of type *service network*, powered by **AWS PrivateLink**, that connects a VPC to a service network. It is how clients reach a service network's services and resource configurations from **outside the local VPC**: traffic arriving over **VPC peering, AWS Transit Gateway, AWS Direct Connect, or VPN** (i.e. **on-premises**, **cross-Region**, or other routable networks) can use it. Differences from a direct VPC association: a VPC has only one direct association but can connect to **multiple** service networks via endpoints, and the endpoint uses **IP addresses from the VPC** to establish connectivity (not the link-local managed prefix list). Private DNS can be enabled on the endpoint. This is the recommended building block for hybrid and cross-Region access.
 
 DNS resolution differs for resources vs services:
@@ -80,7 +83,7 @@ Rule of thumb: **ALB for client-to-application inside a VPC; VPC Lattice for sec
 
 ## Key capabilities to reason about
 
-- **Identity-based access control (auth policies + SigV4).** A service or service network can be `AuthType = NONE` (open within the network) or `AWS_IAM` (guarded by an **auth policy** — an IAM resource-based policy). With `AWS_IAM`, a policy that authorizes by IAM identity requires callers to **SigV4- (or SigV4A-) sign** requests; an allowed principal gets `200`, an unsigned or non-allowed caller gets `403 AccessDeniedException`. Auth policies attach at **service-network** and/or **service** scope and support condition keys (IAM identity *and* request attributes such as HTTP method/path or source VPC). Auth decisions appear in access logs. Note: an auth policy applies to **services**, not to VPC resources (resource configurations).
+- **Identity-based access control (auth policies + SigV4).** A service or service network can be `AuthType = NONE` (open within the network) or `AWS_IAM` (guarded by an **auth policy** — an IAM resource-based policy). An `AWS_IAM` policy can deliberately allow anonymous, unsigned requests. Authorization by IAM identity requires callers to **SigV4- or SigV4A-sign** requests. Requests denied by the effective service-network and service policies receive `403 AccessDeniedException`; passing authorization does not guarantee a `200` response from the target. Auth policies support condition keys for IAM identity and request attributes such as HTTP method, path, or source VPC. Auth decisions appear in access logs. Auth policies apply to **services**, not VPC resources (resource configurations).
 - **Cross-account sharing (AWS RAM).** Share a **service network** (centralized model: one account owns/shares the network, others associate VPCs and publish services) or have each account share **its own** network (distributed model). A service and a **resource configuration** can also be shared via RAM. For least privilege, share to specific account IDs or organizational units (OUs) rather than an entire AWS Organization in production.
 - **Built-in observability (access logging).** Per-request logs (timestamp, client, path, method, status, processing time, auth result, headers) to **CloudWatch Logs**, **S3**, or **Data Firehose**, at network or service scope — no sidecars.
 - **Overlapping CIDRs with no peering.** Because services resolve to link-local addresses, consumer and provider VPCs can have **identical CIDRs**. This is impossible with peering, AWS transit gateways, or AWS Cloud WAN.
@@ -93,13 +96,13 @@ Rule of thumb: **ALB for client-to-application inside a VPC; VPC Lattice for sec
 A repeatable design workflow:
 
 1. **Identify the service(s) and their compute.** Map each **logical application** to a VPC Lattice **service**, and each backend to a **target group** whose type matches the compute (INSTANCE, IP for ECS/EKS, LAMBDA, ALB) — or a **resource configuration** if it's a raw-TCP resource like RDS. A service is **not** limited to one backend: a single service can route to **multiple target groups** via listener rules (by path, header, or method), and those target groups can span **different VPCs and different target types** provided they're in the **same account** as the service. Group backends behind one service when they form one application; use separate services when they are distinct applications.
-2. **Define the listener.** HTTP/HTTPS/gRPC for app services; TLS pass-through if the app terminates TLS. Use HTTPS + ACM for custom domains.
+2. **Define the listener.** HTTP/HTTPS for app services; gRPC through HTTPS with the gRPC target-group protocol version; TLS pass-through if the app terminates TLS. Use HTTPS + ACM for custom domains.
 3. **Place services in a service network.** One network is usually enough for a domain of services; use **multiple** networks when you need segmentation (per environment, tenant, or trust domain), since a service or resource configuration can be associated to more than one. Associate each service to the network (service association).
 4. **Decide the consumer boundary.** Single account/VPC → associate the consumer VPC. Multiple accounts → share the network with **RAM** (centralized vs distributed). On-prem or cross-Region consumers → **service network VPC endpoint**. **Prefer one service network per VPC** — it keeps access control and visibility clean; reach for multiple networks (via endpoints) only when you have a real segmentation need.
 5. **Choose the authorization posture.** Open within the network (`NONE`) for a quick PoC, or `AWS_IAM` + auth policy + SigV4 for identity-based control. Start least-privilege.
 6. **Turn on access logging** at the owning scope from day one.
 7. **Plan DNS.** Use the generated FQDN for PoCs. For **VPC resources**, enable **private DNS** on the VPC association/endpoint (preference `VERIFIED_DOMAINS_ONLY`) so the resource resolves automatically from the consumer VPC. For **services with a custom domain**, create the **ALIAS record** yourself pointing at the service's generated FQDN — or automate it at scale with the [automated DNS configuration Guidance](https://docs.aws.amazon.com/solutions/amazon-vpc-lattice-automated-dns-configuration-on-aws/).
-8. **Ignore CIDR overlap as a blocker** — it isn't one. Don't design peering/TGW around Lattice service traffic.
+8. **Evaluate overlap for the chosen access path.** Provider and consumer CIDRs can overlap for direct VPC-association traffic. Clients reaching a service-network VPC endpoint over peering, Transit Gateway, Direct Connect, or VPN still need unambiguous routing to the endpoint VPC, symmetric return paths, and non-overlapping source/endpoint addressing unless translation is provided.
 
 ---
 
@@ -138,7 +141,7 @@ The one exception to the layout is the **Auth Policies & SigV4** section (`patte
 - **Version pins** (uniform across patterns): module `aws-ia/vpc/aws = 4.7.3`, `aws-ia/amazon-vpc-lattice-module/aws = 1.1.0` (exact `=`); providers `hashicorp/aws >= 6.27.0`, `hashicorp/awscc >= 1.67.0` (floor `>=`); Lambda runtime `python3.14`; Terraform core `>= 1.3.0`.
 - **License header:** MIT-0 header at the top of every IaC source file.
 - **Access logging on by default:** service network/service patterns create a CloudWatch Logs group `/aws/vpclattice/<identifier>`, destroyed on teardown.
-- **DNS facts:** VPC Lattice **services** resolve to IPv4 `169.254.171.x/24` (link-local); **VPC resources** (resource gateway, e.g. RDS) are reached via the `129.224.0.x/17` range; IPv6 is `fd00:ec2:80::/64` for both.
+- **DNS facts:** VPC Lattice **services** resolve to IPv4 `169.254.171.0/24` (link-local); **VPC resources** (resource gateway, e.g. RDS) are reached via the `129.224.0.0/17` range; IPv6 is `fd00:ec2:80::/64` for both.
 - **Auth default:** every service-exposing pattern ships its service network and service with `AuthType = AWS_IAM` and a **completely open** (allow-all, including anonymous) auth policy, so behaviour is unchanged out of the box but the pattern is "auth-ready" — swap in a restrictive policy from `patterns/4-auth_policies/policies/` to enforce access control. The resource-only patterns (RDS / VPC Resources and Centralized VPC Endpoints) keep `NONE`, since auth policies do not apply to VPC resources.
 - **Secure defaults stay on:** IMDSv2 required, encrypted EBS root volumes, HTTPS listeners, RDS managed master password in Secrets Manager. Don't weaken these.
 - **Security-scan suppressions** (Checkov) require a justification (`.checkov.yaml` `skip-check` with a comment, or inline `#checkov:skip=...:reason`). Suppress only deliberate demo simplifications or confirmed false positives.
@@ -147,7 +150,7 @@ See [`CONVENTIONS.md`](./CONVENTIONS.md) for the authoritative contract and [`CO
 
 ### Cost & safety reminder to surface to users
 
-Deploying any pattern provisions **real, billable** resources (VPC Lattice per-request + hourly, EC2 instance-hours, access-logging CloudWatch Logs, plus Aurora for the RDS and Multi-AWS Account patterns, and the **EKS** control plane + managed nodes + a **NAT gateway** — EKS is the most expensive). Patterns are **multi-AZ by default**. Always recommend a non-production account and running the README **Cleanup** steps when finished.
+Deploying any pattern provisions **real, billable** resources. VPC Lattice charges can include provisioned service or resource-configuration hours, data processing, and HTTP requests or TLS connections. Patterns can also incur EC2 instance-hours and access-logging CloudWatch Logs charges, plus Aurora for the RDS and Multi-AWS Account patterns, and the **EKS** control plane, managed nodes, and a **NAT gateway** — EKS is the most expensive. Patterns are **multi-AZ by default**. Always recommend a non-production account and running the README **Cleanup** steps when finished.
 
 ---
 
@@ -155,10 +158,10 @@ Deploying any pattern provisions **real, billable** resources (VPC Lattice per-r
 
 | Fact | Value |
 |------|-------|
-| Service DNS resolves to | IPv4 `169.254.171.x/24` (link-local), IPv6 `fd00:ec2:80::/64` |
-| VPC resource access uses (VPC association range) | IPv4 `129.224.0.x/17`, IPv6 `fd00:ec2:80::/64` |
+| Service DNS resolves to | IPv4 `169.254.171.0/24` (link-local), IPv6 `fd00:ec2:80::/64` |
+| VPC resource access uses (VPC association range) | IPv4 `129.224.0.0/17`, IPv6 `fd00:ec2:80::/64` |
 | Consumer & provider VPC CIDR in every pattern | `10.0.0.0/16` (fully overlapping, on purpose) |
-| Listener protocols | HTTP, HTTPS, gRPC, TLS pass-through |
+| Listener protocols | HTTP, HTTPS, TLS pass-through (gRPC via an HTTPS listener + gRPC target-group protocol version) |
 | Target types | INSTANCE, IP (ECS/EKS), LAMBDA, ALB |
 | TCP/database backends | resource gateway + resource configuration (VPC resources) |
 | Cross-account sharing | AWS RAM (centralized or distributed) |
