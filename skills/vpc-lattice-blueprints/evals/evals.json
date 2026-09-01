@@ -1,0 +1,89 @@
+{
+  "spdx_license_identifier": "MIT-0",
+  "skill": "vpc-lattice-blueprints",
+  "scope": "Documented evaluation corpus. There is no automated runner in this repository: CI validates only the JSON structure of this file (via scripts/validate-package.py). Activation and task-completion cases are executed manually or with an agent-evaluation harness of the maintainer's choice, comparing a skill-enabled agent against the assertions below. This corpus makes no claim that CI verifies model behavior.",
+  "trigger_cases": [
+    { "id": "t01", "expect": "activate", "prompt": "Give me Terraform for cross-VPC service-to-service connectivity with VPC Lattice.", "rationale": "Explicit service + IaC request." },
+    { "id": "t02", "expect": "activate", "prompt": "Which VPC Lattice blueprint supports a resource configuration for an RDS workload?", "rationale": "Catalog lookup, resource configuration vocabulary." },
+    { "id": "t03", "expect": "activate", "prompt": "I need service-network authorization across AWS accounts.", "rationale": "Service network + auth + cross-account." },
+    { "id": "t04", "expect": "activate", "prompt": "Two of my VPCs both use 10.0.0.0/16 and services in them need to call each other. What are my options?", "rationale": "Overlapping CIDRs is a core trigger even without naming VPC Lattice." },
+    { "id": "t05", "expect": "activate", "prompt": "How do I share a service network with another AWS account using RAM?", "rationale": "Cross-account sharing workflow." },
+    { "id": "t06", "expect": "activate", "prompt": "Should I use VPC Lattice or PrivateLink to expose an internal API to another team's VPC?", "rationale": "Comparison question; the skill activates even if the answer is PrivateLink." },
+    { "id": "t07", "expect": "activate", "prompt": "We want to replace our internal ALBs and proxies for east-west traffic with something managed.", "rationale": "Replace internal load balancers/proxies trigger." },
+    { "id": "t08", "expect": "activate", "prompt": "How do I SigV4-sign requests to a service that has AWS_IAM auth enabled?", "rationale": "SigV4 signing cookbook." },
+    { "id": "t09", "expect": "activate", "prompt": "Reach an Aurora cluster in another account over TCP without VPC peering.", "rationale": "VPC resources raw-TCP path." },
+    { "id": "t10", "expect": "activate", "prompt": "Show me a CloudFormation example of a Lambda function behind VPC Lattice.", "rationale": "Pattern + IaC request." },
+    { "id": "t11", "expect": "no_activation", "prompt": "Explain VPC peering route tables.", "rationale": "Pure IP routing concept, no service-connectivity intent." },
+    { "id": "t12", "expect": "no_activation", "prompt": "Deploy an EKS cluster with Terraform.", "rationale": "Generic EKS provisioning, no Lattice context." },
+    { "id": "t13", "expect": "no_activation", "prompt": "Set up an internet-facing ALB with WAF for our web app.", "rationale": "Internet-facing client traffic is out of scope." },
+    { "id": "t14", "expect": "no_activation", "prompt": "Configure Transit Gateway route tables to connect three VPCs.", "rationale": "General IP routing between networks." },
+    { "id": "t15", "expect": "no_activation", "prompt": "Why is my NLB health check failing?", "rationale": "Unrelated load balancer troubleshooting." },
+    { "id": "t16", "expect": "no_activation", "prompt": "Create an S3 gateway VPC endpoint.", "rationale": "Gateway endpoints are unrelated to service networks." },
+    { "id": "t17", "expect": "activate_and_clarify", "prompt": "Connect two private applications across VPCs.", "rationale": "Plausible Lattice fit; agent should activate and normalize the request (protocol, boundaries, IP-routing vs service-access) before recommending." },
+    { "id": "t18", "expect": "activate_and_clarify", "prompt": "We have overlapping CIDRs between accounts and need connectivity.", "rationale": "Overlap triggers activation; clarify whether the need is service-level access (Lattice) or general IP reachability (redesign/NAT)." },
+    { "id": "t19", "expect": "activate_and_clarify", "prompt": "Expose a database to another VPC.", "rationale": "Likely VPC-resources fit; clarify engine, account boundaries, and consumer model first." },
+    { "id": "t20", "expect": "activate_and_clarify", "prompt": "What's the best way to do microservice discovery on AWS?", "rationale": "Adjacent topic; activate provisionally, may hand off to generic architecture guidance if no cross-VPC/account connectivity need emerges." }
+  ],
+  "task_cases": [
+    {
+      "id": "task01",
+      "prompt": "I need consumers in VPC A to reach an Aurora MySQL cluster in VPC B over TCP. Both VPCs use 10.0.0.0/16. Show me the blueprint to start from.",
+      "assertions": [
+        "Selects the 'RDS / VPC Resources' sub-pattern under Simple Architectures from the manifest",
+        "Explains the resource gateway + resource configuration constructs",
+        "States that auth policies do NOT apply to VPC resources",
+        "States consumers resolve the resource to an address in 129.224.0.0/17 and that no route tables are modified",
+        "Notes the overlapping 10.0.0.0/16 CIDRs are not a blocker",
+        "Mentions Aurora cost and the pattern's cleanup steps"
+      ]
+    },
+    {
+      "id": "task02",
+      "prompt": "Give me the CloudFormation version of the EKS pattern.",
+      "assertions": [
+        "Checks the manifest before answering",
+        "States the EKS pattern is Terraform-only per blueprint.yaml",
+        "Does not invent a CloudFormation implementation or file path",
+        "Explains why (Helm + Kubernetes Gateway API CRDs) or offers the Terraform implementation",
+        "Offers a CloudFormation-supported alternative pattern if the user needs CloudFormation"
+      ]
+    },
+    {
+      "id": "task03",
+      "prompt": "We have a central networking account and want provider teams to publish services that consumer accounts can call. Which pattern and what are the steps?",
+      "assertions": [
+        "Selects Multi-AWS Account / Centralized Service Network",
+        "Describes RAM sharing of the service network and which account owns what",
+        "States consumer accounts associate their VPCs to the shared network",
+        "Asks about or addresses the authorization posture (open default vs restrictive auth policy)",
+        "Notes multi-account deploy/destroy ordering per account",
+        "States routing consequences: no route-table changes for association traffic"
+      ]
+    },
+    {
+      "id": "task04",
+      "prompt": "Use the VPC Lattice blueprint for API Gateway integration.",
+      "assertions": [
+        "Checks the manifest and finds no such pattern",
+        "Explicitly states the pattern does not exist in the catalog rather than fabricating one",
+        "Does not invent template paths, parameters, integrations, target types, or workarounds",
+        "Labels any suggested adaptation as outside the published catalog and verifies it against current AWS service support",
+        "Does not claim that an API Gateway VPC link targets VPC Lattice or that an ALB can register API Gateway as a target",
+        "If current documentation cannot be accessed, states the verified catalog result and verification limitation without suggesting nearest patterns, integrations, workarounds, or design alternatives; clarification questions are allowed",
+        "Suggests an upstream feature request only after current service support has been verified and no supported composition meets the requirement"
+      ]
+    },
+    {
+      "id": "task05",
+      "prompt": "Our Lattice service is deployed with the default auth policy. Lock it down so only one IAM role in a consumer account can call it.",
+      "assertions": [
+        "Recognizes the repo default is AWS_IAM with an open allow-all policy",
+        "Points at patterns/4-auth_policies/policies/ for a restrictive policy and adapts it to the caller principal",
+        "States callers must SigV4-sign requests and points at patterns/4-auth_policies/signing/",
+        "Mentions policy scope options (service network and/or service)",
+        "Notes auth decisions appear in access logs and can be used to verify the lockdown",
+        "Warns that unsigned or non-allowed callers will receive 403 AccessDeniedException"
+      ]
+    }
+  ]
+}
