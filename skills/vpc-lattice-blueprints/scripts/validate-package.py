@@ -8,7 +8,8 @@ Checks (all static, no network, no AWS credentials, stdlib only):
      `description`; `name` matches ^[a-z0-9-]+$, is <= 64 chars, and equals
      the package directory name; `description` is non-empty and <= 1024 chars.
   2. Every relative markdown link and every `references/...` path mentioned
-     in SKILL.md and README.md resolves to an existing file.
+     in SKILL.md, README.md, and every references/*.md file resolves to an
+     existing file.
   3. assets/blueprint.yaml is byte-identical (SHA-256) to the canonical
      repository blueprint.yaml, and the package README publishes that hash.
   4. evals/evals.json parses; case IDs are unique, trigger cases carry an
@@ -39,7 +40,16 @@ def err(msg: str) -> None:
 
 
 def parse_frontmatter(text: str) -> dict:
-    """Minimal frontmatter parser for simple `key: value` pairs (no PyYAML dep)."""
+    """Minimal frontmatter parser for simple `key: value` pairs (no PyYAML dep).
+
+    Understands single-line values, folded/literal block scalars
+    (`key: >` / `key: |`, optionally with a chomping indicator), and
+    space/tab-indented continuation lines. Any other YAML construct
+    (lists, nested maps, comments) is skipped rather than rejected:
+    this validator checks only the fields it models (`name`,
+    `description`) and must not fail legitimate frontmatter it does
+    not understand.
+    """
     if not text.startswith("---\n"):
         err("SKILL.md: file must begin with YAML frontmatter ('---' on line 1)")
         return {}
@@ -55,11 +65,14 @@ def parse_frontmatter(text: str) -> dict:
             key = m.group(1)
             if key in fields:
                 err(f"SKILL.md frontmatter: duplicate field '{key}'")
-            fields[key] = m.group(2).strip()
+            value = m.group(2).strip()
+            if re.fullmatch(r"[>|][+-]?", value):
+                value = ""  # block scalar: the body arrives as indented lines below
+            fields[key] = value
         elif key and line.startswith((" ", "\t")):
-            fields[key] += " " + line.strip()
-        elif line.strip():
-            err(f"SKILL.md frontmatter: unsupported line '{line}'")
+            fields[key] = (fields[key] + " " + line.strip()).strip()
+        # Anything else is a YAML construct this parser does not model:
+        # tolerate it silently instead of erroring.
     return fields
 
 
@@ -89,8 +102,12 @@ def check_frontmatter() -> None:
 def check_relative_paths() -> None:
     link_re = re.compile(r"\]\(([^)]+)\)")
     ref_re = re.compile(r"`(references/[A-Za-z0-9._/-]+)`")
-    for doc in ("SKILL.md", "README.md"):
-        path = PKG_DIR / doc
+    docs: list[tuple[str, Path]] = [(name, PKG_DIR / name) for name in ("SKILL.md", "README.md")]
+    docs += [
+        (str(p.relative_to(PKG_DIR)), p)
+        for p in sorted((PKG_DIR / "references").glob("*.md"))
+    ]
+    for doc, path in docs:
         if not path.is_file():
             err(f"{doc} is missing")
             continue
