@@ -1,0 +1,117 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: AgentCore Gateway's VPC-hosted targets (tickets and triage, self-managed private endpoints) and the gateway's Cedar policies, one per caller
+
+Parameters:
+  GatewayId:
+    Type: String
+    Description: AgentCore Gateway ID
+  GatewayArn:
+    Type: String
+    Description: AgentCore Gateway ARN (the resource in the Cedar policies)
+  PolicyEngineId:
+    Type: String
+    Description: AgentCore Gateway policy engine ID
+  DomainName:
+    Type: String
+    Description: Domain of the VPC-hosted backends' names (tickets.<DomainName> and triage.<DomainName>, which match the certificate on their load balancers)
+  TicketsResourceConfigurationArn:
+    Type: String
+    Description: Resource configuration of the tickets MCP server (backends.yaml)
+  TriageResourceConfigurationArn:
+    Type: String
+    Description: Resource configuration of the triage agent (backends.yaml)
+  AgentEcsRoleArn:
+    Type: String
+    Description: Self-hosted agent (agent-ecs) task role ARN
+  AgentRuntimeRoleArn:
+    Type: String
+    Description: AgentCore Runtime agent (agent-runtime) execution role ARN
+  TriageRoleArn:
+    Type: String
+    Description: Triage agent task role ARN
+
+Resources:
+  # ========== VPC-HOSTED TARGETS (SELF-MANAGED PRIVATE ENDPOINTS) ==========
+  # ---------- TARGET: TICKETS (MCP SERVER, AMAZON ECS) ----------
+  TicketsTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !Ref GatewayId
+      Name: tickets
+      Description: Helpdesk tickets MCP server (Amazon ECS, tickets VPC)
+      PrivateEndpoint:
+        SelfManagedLatticeResource:
+          ResourceConfigurationIdentifier: !Ref TicketsResourceConfigurationArn
+      TargetConfiguration:
+        Mcp:
+          McpServer:
+            Endpoint: !Sub https://tickets.${DomainName}/mcp
+
+  # ---------- TARGET: TRIAGE (A2A AGENT, AMAZON ECS) ----------
+  TriageTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !Ref GatewayId
+      Name: triage
+      Description: Triage agent (A2A, Amazon ECS, triage VPC)
+      PrivateEndpoint:
+        SelfManagedLatticeResource:
+          ResourceConfigurationIdentifier: !Ref TriageResourceConfigurationArn
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
+          CredentialProvider:
+            IamCredentialProvider:
+              Service: bedrock-agentcore
+      TargetConfiguration:
+        Http:
+          Passthrough:
+            Endpoint: !Sub https://triage.${DomainName}
+            ProtocolType: A2A
+
+  # ========== GATEWAY POLICY (CEDAR) ==========
+  # agent-ecs: everything
+  AllowAgentEcs:
+    Type: AWS::BedrockAgentCore::Policy
+    DependsOn:
+      - TicketsTarget
+      - TriageTarget
+    Properties:
+      Name: allow_agent_ecs
+      PolicyEngineId: !Ref PolicyEngineId
+      Definition:
+        Cedar:
+          Statement: !Sub
+            - 'permit(principal == AgentCore::IamEntity::"arn:${AWS::Partition}:sts::${AWS::AccountId}:assumed-role/${Role}", action, resource == AgentCore::Gateway::"${GatewayArn}");'
+            - Role: !Select [1, !Split ['/', !Ref AgentEcsRoleArn]]
+
+  # agent-runtime: everything except creating an employee
+  AllowAgentRuntime:
+    Type: AWS::BedrockAgentCore::Policy
+    DependsOn:
+      - TicketsTarget
+      - TriageTarget
+    Properties:
+      Name: allow_agent_runtime
+      PolicyEngineId: !Ref PolicyEngineId
+      Definition:
+        Cedar:
+          Statement: !Sub
+            - 'permit(principal == AgentCore::IamEntity::"arn:${AWS::Partition}:sts::${AWS::AccountId}:assumed-role/${Role}", action in [AgentCore::Action::"tickets", AgentCore::Action::"directory___listEmployees", AgentCore::Action::"directory___getEmployee", AgentCore::Action::"triage", AgentCore::Action::"model"], resource == AgentCore::Gateway::"${GatewayArn}");'
+            - Role: !Select [1, !Split ['/', !Ref AgentRuntimeRoleArn]]
+
+  # triage: only the model
+  AllowTriage:
+    Type: AWS::BedrockAgentCore::Policy
+    DependsOn:
+      - TicketsTarget
+      - TriageTarget
+    Properties:
+      Name: allow_triage
+      PolicyEngineId: !Ref PolicyEngineId
+      Definition:
+        Cedar:
+          Statement: !Sub
+            - 'permit(principal == AgentCore::IamEntity::"arn:${AWS::Partition}:sts::${AWS::AccountId}:assumed-role/${Role}", action in AgentCore::Action::"model", resource == AgentCore::Gateway::"${GatewayArn}");'
+            - Role: !Select [1, !Split ['/', !Ref TriageRoleArn]]

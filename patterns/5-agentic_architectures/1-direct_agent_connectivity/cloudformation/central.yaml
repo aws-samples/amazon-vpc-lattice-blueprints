@@ -1,0 +1,300 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: Central items - VPC Lattice service network (AWS_IAM) and access logging, and the central AWS service endpoints (endpoints VPC, interface VPC endpoints, resource gateway and one single resource configuration per endpoint, associated with the service network)
+Transform: 'AWS::LanguageExtensions'
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier for VPC Lattice resource names (VPC Lattice caps several names at 40 characters)
+    Default: agentic-direct
+
+Mappings:
+  SubnetToIndex:
+    RGWa:
+      Index: 0
+    RGWb:
+      Index: 1
+    Endpointsa:
+      Index: 2
+    Endpointsb:
+      Index: 3
+  AzToIndex:
+    a:
+      Index: 0
+    b:
+      Index: 1
+  # Centralized endpoints: interface endpoint service suffix and the DNS name the consumers use (<prefix>.<region>.<suffix>)
+  # ecr.dkr is defined separately, as its DNS name contains the account ID.
+  Endpoints:
+    bedrock:
+      Service: bedrock-runtime
+      Prefix: bedrock-runtime
+      Suffix: amazonaws.com
+    agentcore:
+      Service: bedrock-agentcore
+      Prefix: bedrock-agentcore
+      Suffix: amazonaws.com
+    registry:
+      Service: agent-registry
+      Prefix: agent-registry
+      Suffix: api.aws
+    ecrapi:
+      Service: ecr.api
+      Prefix: api.ecr
+      Suffix: amazonaws.com
+    logs:
+      Service: logs
+      Prefix: logs
+      Suffix: amazonaws.com
+    sts:
+      Service: sts
+      Prefix: sts
+      Suffix: amazonaws.com
+    ssmmsgs:
+      Service: ssmmessages
+      Prefix: ssmmessages
+      Suffix: amazonaws.com
+
+Resources:
+  # ---------- VPC LATTICE SERVICE NETWORK ----------
+  # One service network connects both agents to the MCP server, the REST API, the triage agent and the AWS endpoints.
+  ServiceNetwork:
+    Type: AWS::VpcLattice::ServiceNetwork
+    Properties:
+      Name: !Sub service-network-${Identifier}
+      AuthType: AWS_IAM
+
+  # Service network auth policy: only authenticated (SigV4-signed) requests. Each service then decides which agents
+  # may call it (backends.yaml)
+  ServiceNetworkAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref ServiceNetwork
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowAnyAuthenticatedPrincipal
+            Effect: Allow
+            Principal: '*'
+            Action: vpc-lattice-svcs:Invoke
+            Resource: '*'
+            Condition:
+              StringNotEqualsIgnoreCase:
+                aws:PrincipalType: anonymous
+
+  # ---------- ACCESS LOGGING ----------
+  AccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vpclattice/${Identifier}
+      RetentionInDays: 7
+
+  # Requests to the VPC Lattice services (caller principal, auth decision, path, status code)
+  ServicesAccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    Properties:
+      ResourceIdentifier: !Ref ServiceNetwork
+      DestinationArn: !GetAtt AccessLogGroup.Arn
+      ServiceNetworkLogType: SERVICE
+
+  # Connections to the resource configurations (the central AWS endpoints). Chained with DependsOn: both
+  # subscriptions update the same CloudWatch Logs resource policy.
+  ResourcesAccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    DependsOn: ServicesAccessLogSubscription
+    Properties:
+      ResourceIdentifier: !Ref ServiceNetwork
+      DestinationArn: !GetAtt AccessLogGroup.Arn
+      ServiceNetworkLogType: RESOURCE
+
+  # ---------- ENDPOINTS VPC ----------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub endpoints-vpc-${AWS::StackName}
+
+  # For::Each iteration: per subnet type (RGW, Endpoints) and AZ (2 AZs)
+  'Fn::ForEach::SubnetTypes':
+    - SubnetType
+    - [RGW, Endpoints]
+    - '${SubnetType}':
+      'Fn::ForEach::AZ':
+        - AvailabilityZone
+        - [a, b]
+        - '${SubnetType}Subnet${AvailabilityZone}':
+            Type: AWS::EC2::Subnet
+            Properties:
+              VpcId: !Ref VPC
+              AvailabilityZone: !Select
+                - !FindInMap [AzToIndex, !Ref AvailabilityZone, Index]
+                - !GetAZs ''
+              CidrBlock: !Select
+                - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
+                - !Cidr [!GetAtt VPC.CidrBlock, 256, 8]
+              Tags:
+                - Key: Name
+                  Value: !Sub endpoints-subnet-${SubnetType}-AZ${AvailabilityZone}-${AWS::StackName}
+          '${SubnetType}RouteTable${AvailabilityZone}':
+            Type: AWS::EC2::RouteTable
+            Properties:
+              VpcId: !Ref VPC
+              Tags:
+                - Key: Name
+                  Value: !Sub endpoints-rt-${SubnetType}-AZ${AvailabilityZone}-${AWS::StackName}
+          '${SubnetType}RouteTableAssociation${AvailabilityZone}':
+            Type: AWS::EC2::SubnetRouteTableAssociation
+            Properties:
+              RouteTableId: !Ref
+                'Fn::Sub': '${SubnetType}RouteTable${AvailabilityZone}'
+              SubnetId: !Ref
+                'Fn::Sub': '${SubnetType}Subnet${AvailabilityZone}'
+
+  # ---------- SECURITY GROUPS ----------
+  RGWSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Resource Gateway Security Group
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - Description: Allowing HTTPS to the VPC endpoints (local VPC)
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !GetAtt VPC.CidrBlock
+      Tags:
+        - Key: Name
+          Value: !Sub endpoints-vpc-resource-gateway-security-group-${AWS::StackName}
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC Endpoints Security Group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - Description: Allowing HTTPS from the resource gateway
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref RGWSecurityGroup
+      SecurityGroupEgress:
+        - Description: Allowing egress traffic (local VPC)
+          IpProtocol: "-1"
+          CidrIp: !GetAtt VPC.CidrBlock
+      Tags:
+        - Key: Name
+          Value: !Sub endpoints-vpc-endpoint-security-group-${AWS::StackName}
+
+  # ---------- RESOURCE GATEWAY ----------
+  ResourceGateway:
+    Type: AWS::VpcLattice::ResourceGateway
+    Properties:
+      Name: !Sub resource-gateway-${Identifier}
+      IpAddressType: IPV4
+      ResourceConfigDnsResolution: IN_VPC
+      SecurityGroupIds:
+        - !Ref RGWSecurityGroup
+      SubnetIds:
+        - !Ref RGWSubneta
+        - !Ref RGWSubnetb
+      VpcIdentifier: !Ref VPC
+
+  # ---------- VPC ENDPOINTS & RESOURCE CONFIGURATIONS ----------
+  # Per endpoint: 1 interface VPC endpoint (private DNS on), 1 single resource configuration whose custom domain
+  # name is the service's standard DNS name, and its resource association with the service network (private DNS).
+  'Fn::ForEach::Endpoints':
+    - EndpointKey
+    - [bedrock, agentcore, registry, ecrapi, logs, sts, ssmmsgs]
+    - '${EndpointKey}Endpoint':
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+          VpcEndpointType: Interface
+          VpcId: !Ref VPC
+          ServiceName: !Join ['.', ['com.amazonaws', !Ref AWS::Region, !FindInMap [Endpoints, !Ref EndpointKey, Service]]]
+          PrivateDnsEnabled: true
+          SecurityGroupIds:
+            - !Ref EndpointSecurityGroup
+          SubnetIds:
+            - !Ref EndpointsSubneta
+            - !Ref EndpointsSubnetb
+      '${EndpointKey}ResourceConfiguration':
+        Type: AWS::VpcLattice::ResourceConfiguration
+        DependsOn: !Sub '${EndpointKey}Endpoint'
+        Properties:
+          Name: !Sub 'resource-config-${EndpointKey}-${Identifier}'
+          ResourceConfigurationType: SINGLE
+          ResourceGatewayId: !Ref ResourceGateway
+          ProtocolType: TCP
+          PortRanges:
+            - '443'
+          CustomDomainName: !Join ['.', [!FindInMap [Endpoints, !Ref EndpointKey, Prefix], !Ref AWS::Region, !FindInMap [Endpoints, !Ref EndpointKey, Suffix]]]
+          ResourceConfigurationDefinition:
+            DnsResource:
+              DomainName: !Join ['.', [!FindInMap [Endpoints, !Ref EndpointKey, Prefix], !Ref AWS::Region, !FindInMap [Endpoints, !Ref EndpointKey, Suffix]]]
+              IpAddressType: IPV4
+      '${EndpointKey}ResourceAssociation':
+        Type: AWS::VpcLattice::ServiceNetworkResourceAssociation
+        Properties:
+          PrivateDnsEnabled: true
+          ResourceConfigurationId: !GetAtt [!Sub '${EndpointKey}ResourceConfiguration', Id]
+          ServiceNetworkId: !Ref ServiceNetwork
+          Tags:
+            - Key: Name
+              Value: !Sub resource-association-${EndpointKey}-${Identifier}
+
+  # Amazon ECR registry endpoint: its DNS name (<account>.dkr.ecr.<region>.amazonaws.com) contains the account ID
+  ecrdkrEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.dkr
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      SubnetIds:
+        - !Ref EndpointsSubneta
+        - !Ref EndpointsSubnetb
+
+  ecrdkrResourceConfiguration:
+    Type: AWS::VpcLattice::ResourceConfiguration
+    DependsOn: ecrdkrEndpoint
+    Properties:
+      Name: !Sub 'resource-config-ecrdkr-${Identifier}'
+      ResourceConfigurationType: SINGLE
+      ResourceGatewayId: !Ref ResourceGateway
+      ProtocolType: TCP
+      PortRanges:
+        - '443'
+      CustomDomainName: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+      ResourceConfigurationDefinition:
+        DnsResource:
+          DomainName: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+          IpAddressType: IPV4
+
+  ecrdkrResourceAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkResourceAssociation
+    Properties:
+      PrivateDnsEnabled: true
+      ResourceConfigurationId: !GetAtt ecrdkrResourceConfiguration.Id
+      ServiceNetworkId: !Ref ServiceNetwork
+      Tags:
+        - Key: Name
+          Value: !Sub resource-association-ecrdkr-${Identifier}
+
+Outputs:
+  ServiceNetworkId:
+    Description: VPC Lattice service network ID
+    Value: !GetAtt ServiceNetwork.Id
+  ServiceNetworkArn:
+    Description: VPC Lattice service network ARN
+    Value: !GetAtt ServiceNetwork.Arn
+  RegistryEndpointUrl:
+    Description: URL of the AWS Agent Registry data plane through its centralized endpoint
+    Value: !Sub https://agent-registry.${AWS::Region}.api.aws

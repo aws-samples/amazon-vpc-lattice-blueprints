@@ -1,0 +1,5 @@
+strands-agents[a2a,anthropic,openai]==1.62.0
+anthropic==0.125.0
+bedrock-agentcore==1.24.2
+boto3==1.43.117
+httpx==0.28.1

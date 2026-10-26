@@ -1,0 +1,262 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: Common items - Amazon ECR repositories, S3 bucket for packaged Lambda code, Amazon ECS cluster, application log group and IAM roles
+
+Resources:
+  # ---------- ECR REPOSITORIES ----------
+  AgentRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: !Sub 'agent-${AWS::StackName}'
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: true
+
+  TriageRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: !Sub 'triage-${AWS::StackName}'
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: true
+
+  # ---------- ARTIFACTS BUCKET (aws cloudformation package) ----------
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    # checkov:skip=CKV_AWS_18:Short-lived bucket holding packaged demo Lambda code, access logging not needed
+    # checkov:skip=CKV_AWS_21:Packaged artifacts are re-uploaded on every deploy, versioning not needed
+    DeletionPolicy: Delete
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ---------- AMAZON ECS CLUSTER ----------
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub cluster-${AWS::StackName}
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  # Application logs (agents and triage)
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /${AWS::StackName}/applications
+      RetentionInDays: 7
+
+  # ---------- IAM: ECS TASK EXECUTION ----------
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # ---------- IAM: ECS INFRASTRUCTURE ROLE (VPC LATTICE TARGET REGISTRATION) ----------
+  EcsInfrastructureRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonECSInfrastructureRolePolicyForVpcLattice
+
+  # ---------- IAM: AGENT PERMISSIONS (SHARED BY BOTH AGENT ROLES) ----------
+  AgentPermissions:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: InvokeModels
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource: '*'
+          - Sid: InvokeVpcLatticeServices
+            Effect: Allow
+            Action: vpc-lattice-svcs:Invoke
+            Resource: '*'
+          - Sid: DiscoverRegistryRecords
+            Effect: Allow
+            Action:
+              - agent-registry:SearchDiscoverableRegistryRecords
+              - agent-registry:ListDiscoverableRegistryRecords
+              - agent-registry:GetDiscoverableRegistryRecord
+            Resource: !Sub arn:${AWS::Partition}:agent-registry:${AWS::Region}:${AWS::AccountId}:registry/*
+
+  # ---------- IAM: SELF-HOSTED AGENT (ECS TASK ROLE) ----------
+  AgentEcsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub agent-ecs-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref AgentPermissions
+      Policies:
+        - PolicyName: invoke-agent-runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: bedrock-agentcore:InvokeAgentRuntime
+                Resource: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*
+        # ECS Exec (the tests run commands inside the agent container)
+        - PolicyName: ecs-exec
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+
+  # ---------- IAM: AGENT ON AGENTCORE RUNTIME ----------
+  AgentRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub agent-runtime-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*
+      ManagedPolicyArns:
+        - !Ref AgentPermissions
+      Policies:
+        - PolicyName: runtime-platform
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: PullImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/*
+              - Sid: EcrToken
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                  - logs:DescribeLogGroups
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*
+
+  # ---------- IAM: TRIAGE AGENT (ECS TASK ROLE) ----------
+  TriageRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-models
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+
+  # ---------- IAM: LAMBDA FUNCTIONS (MCP SERVER AND REST API) ----------
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+Outputs:
+  AgentRepositoryUri:
+    Description: Agent image repository URI
+    Value: !GetAtt AgentRepository.RepositoryUri
+  TriageRepositoryUri:
+    Description: Triage agent image repository URI
+    Value: !GetAtt TriageRepository.RepositoryUri
+  ArtifactsBucket:
+    Description: S3 bucket used by aws cloudformation package (empty it before deleting the stack)
+    Value: !Ref ArtifactsBucket
+  ClusterName:
+    Description: Amazon ECS cluster name
+    Value: !Ref Cluster
+  ApplicationLogGroup:
+    Description: Application log group (agents and triage)
+    Value: !Ref ApplicationLogGroup
+  TaskExecutionRoleArn:
+    Description: ECS task execution role ARN
+    Value: !GetAtt TaskExecutionRole.Arn
+  EcsInfrastructureRoleArn:
+    Description: ECS infrastructure role ARN (VPC Lattice target registration)
+    Value: !GetAtt EcsInfrastructureRole.Arn
+  AgentEcsRoleArn:
+    Description: Self-hosted agent (agent-ecs) task role ARN
+    Value: !GetAtt AgentEcsRole.Arn
+  AgentRuntimeRoleArn:
+    Description: AgentCore Runtime agent (agent-runtime) execution role ARN
+    Value: !GetAtt AgentRuntimeRole.Arn
+  TriageRoleArn:
+    Description: Triage agent task role ARN
+    Value: !GetAtt TriageRole.Arn
+  LambdaRoleArn:
+    Description: Lambda execution role ARN
+    Value: !GetAtt LambdaRole.Arn

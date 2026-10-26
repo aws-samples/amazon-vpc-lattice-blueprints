@@ -14,6 +14,7 @@ Recommend VPC Lattice when **most** of these are true:
 - You want **identity-based authorization** (IAM/SigV4) instead of, or in addition to, network-location controls (security groups/CIDRs).
 - You want **per-request access logging** built in, with no sidecars.
 - You're connecting **heterogeneous compute** (EC2, ASG, Lambda, ECS, EKS, ALB, or a TCP resource like RDS) behind one consistent model.
+- **AI agents** call tools, APIs, other agents and models across VPCs or accounts, and each call should be authorized on the agent's identity, directly or through an AI gateway.
 
 Prefer a different tool when:
 
@@ -34,6 +35,7 @@ Selection heuristics by request shape:
 - **Multiple AWS accounts** → *Multi-AWS Account*: **Centralized Service Network** when one networking account owns the service network; **Distributed** when each consumer account owns its own network and associates shared services/resources.
 - **Many VPCs each duplicating interface endpoints** → *Advanced Architectures / Centralized VPC Endpoints*.
 - **Reach a whole range of addresses (a subnet or network segment) in another VPC or account**, especially when the hosts are ephemeral or not known in advance → *Advanced Architectures / Network Segment Access with Tunnel Endpoints*. Confirm the consumer can run GENEVE on its hosts, only needs TCP, and never needs the provider side to initiate connections; otherwise share named resources through a service network instead.
+- **AI agents calling MCP servers, REST APIs or other agents (A2A)** → *Agentic Architectures*: **Direct Agent Connectivity** with no AI gateway; **Self-Hosted AI Gateway** when a gateway such as LiteLLM must be the only path to the tools; **AgentCore Gateway** for the managed gateway, with VPC Lattice carrying agents in VPCs to its centralized endpoint and the gateway reaching backends in their own VPCs or accounts through shared resource configurations.
 - **Restricting who can call a service** → overlay *Auth Policies & SigV4* (`patterns/4-auth_policies/`) on whichever pattern was chosen; it is a reference toolkit, not a deployable pattern.
 
 ## Composing patterns
@@ -43,5 +45,6 @@ The patterns are building blocks, not mutually exclusive products. Typical compo
 - A **multi-account share** (Centralized or Distributed) *plus* the **Centralized VPC Endpoints** layout.
 - An **HTTP service** *and* a **VPC-resource database** reached from the same consumer VPC.
 - Any service-exposing pattern *plus* a restrictive **auth policy** from the cookbook.
+- An **Agentic Architectures** pattern *plus* a **multi-account share**: the service network, services and resource configurations over AWS RAM, and AWS Agent Registry shared with the consumer accounts.
 
 Start from the closest pattern, then layer in pieces from the others rather than assuming a single directory must cover everything. Never combine a pattern with one that `blueprint.yaml` marks `coming_soon` — recommend only published building blocks.

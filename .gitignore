@@ -42,3 +42,5 @@ terraform.rc
 keys/
 gcm-diagnose.log
 *.zip
+# CloudFormation packaged templates and test responses (Makefile build directory)
+.build/

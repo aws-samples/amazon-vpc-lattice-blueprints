@@ -1,0 +1,684 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: VPC-hosted backends of the AgentCore Gateway - tickets (MCP server) and triage (A2A agent) on Amazon ECS, each in its own VPC behind an internal Application Load Balancer, published with a VPC Lattice resource gateway and resource configuration (self-managed)
+Transform: 'AWS::LanguageExtensions'
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier for VPC Lattice and load balancer names
+    Default: agentic-core
+  ServiceNetworkId:
+    Type: String
+    Description: VPC Lattice service network ID (the backend VPCs join it for the central endpoints)
+  CertificateArn:
+    Type: String
+    Description: ARN of the ACM public certificate for the load balancers. It must cover *.<DomainName>.
+  GatewayUrl:
+    Type: String
+    Description: AgentCore Gateway URL (the triage agent's agent card advertises the triage agent through the gateway)
+  RegistryId:
+    Type: String
+    Description: AWS Agent Registry ID (the triage agent finds the gateway's model endpoint in it)
+  RegistryEndpointUrl:
+    Type: String
+    Description: AWS Agent Registry data plane URL
+  TaskExecutionRoleArn:
+    Type: String
+    Description: ECS task execution role ARN
+  TriageRoleArn:
+    Type: String
+    Description: Triage agent task role ARN
+  ClusterName:
+    Type: String
+    Description: Amazon ECS cluster name
+  ApplicationLogGroup:
+    Type: String
+    Description: Application log group
+  TicketsImageUri:
+    Type: String
+    Description: Tickets MCP server image URI (ARM64)
+  TriageImageUri:
+    Type: String
+    Description: Triage agent image URI (ARM64)
+
+Mappings:
+  # Three subnet types per backend VPC: workload (tasks), alb (load balancer) and resourcegateway
+  SubnetToIndex:
+    Workloada:
+      Index: 0
+    Workloadb:
+      Index: 1
+    Alba:
+      Index: 2
+    Albb:
+      Index: 3
+    RGWa:
+      Index: 4
+    RGWb:
+      Index: 5
+  AzToIndex:
+    a:
+      Index: 0
+    b:
+      Index: 1
+
+Resources:
+  # ========== MCP SERVER: TICKETS (AMAZON ECS, TICKETS VPC) ==========
+  # ---------- VPC RESOURCES (TICKETS VPC) ----------
+  TicketsVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub tickets-vpc-${AWS::StackName}
+
+  'Fn::ForEach::TicketsSubnetTypes':
+    - SubnetType
+    - [Workload, Alb, RGW]
+    - 'Tickets${SubnetType}':
+      'Fn::ForEach::TicketsAZ':
+        - AvailabilityZone
+        - [a, b]
+        - 'Tickets${SubnetType}Subnet${AvailabilityZone}':
+            Type: AWS::EC2::Subnet
+            Properties:
+              VpcId: !Ref TicketsVPC
+              AvailabilityZone: !Select
+                - !FindInMap [AzToIndex, !Ref AvailabilityZone, Index]
+                - !GetAZs ''
+              CidrBlock: !Select
+                - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
+                - !Cidr [!GetAtt TicketsVPC.CidrBlock, 256, 8]
+              Tags:
+                - Key: Name
+                  Value: !Sub tickets-subnet-${SubnetType}-AZ${AvailabilityZone}-${AWS::StackName}
+          'Tickets${SubnetType}RouteTable${AvailabilityZone}':
+            Type: AWS::EC2::RouteTable
+            Properties:
+              VpcId: !Ref TicketsVPC
+              Tags:
+                - Key: Name
+                  Value: !Sub tickets-rt-${SubnetType}-AZ${AvailabilityZone}-${AWS::StackName}
+          'Tickets${SubnetType}RouteTableAssociation${AvailabilityZone}':
+            Type: AWS::EC2::SubnetRouteTableAssociation
+            Properties:
+              RouteTableId: !Ref
+                'Fn::Sub': 'Tickets${SubnetType}RouteTable${AvailabilityZone}'
+              SubnetId: !Ref
+                'Fn::Sub': 'Tickets${SubnetType}Subnet${AvailabilityZone}'
+
+  # Amazon S3 gateway endpoint (Amazon ECR image layers are stored in Amazon S3; gateway endpoints are per VPC)
+  TicketsS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref TicketsVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref TicketsWorkloadRouteTablea
+        - !Ref TicketsWorkloadRouteTableb
+
+  # ---------- VPC LATTICE CONNECTIVITY (TICKETS VPC) ----------
+  # The backend's way in: the gateway's private endpoint enters the VPC through the resource gateway, to the load balancer.
+  TicketsResourceGateway:
+    Type: AWS::VpcLattice::ResourceGateway
+    Properties:
+      Name: !Sub resource-gateway-tickets-${Identifier}
+      IpAddressType: IPV4
+      ResourceConfigDnsResolution: IN_VPC
+      SecurityGroupIds:
+        - !Ref TicketsRGWSecurityGroup
+      SubnetIds:
+        - !Ref TicketsRGWSubneta
+        - !Ref TicketsRGWSubnetb
+      VpcIdentifier: !Ref TicketsVPC
+
+  TicketsResourceConfiguration:
+    Type: AWS::VpcLattice::ResourceConfiguration
+    Properties:
+      Name: !Sub resource-config-tickets-${Identifier}
+      ResourceConfigurationType: SINGLE
+      ResourceGatewayId: !Ref TicketsResourceGateway
+      ProtocolType: TCP
+      PortRanges:
+        - '443'
+      ResourceConfigurationDefinition:
+        DnsResource:
+          DomainName: !GetAtt TicketsLoadBalancer.DNSName
+          IpAddressType: IPV4
+
+  # Self-managed resource configurations are visible to their owner, who can log every connection to them
+  TicketsAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vpclattice/resource-config-tickets-${Identifier}
+      RetentionInDays: 7
+
+  TicketsAccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    Properties:
+      ResourceIdentifier: !GetAtt TicketsResourceConfiguration.Arn
+      DestinationArn: !GetAtt TicketsAccessLogGroup.Arn
+
+  # VPC association: the central endpoints the tasks need (images, logs)
+  TicketsVpcAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkVpcAssociation
+    Properties:
+      ServiceNetworkIdentifier: !Ref ServiceNetworkId
+      VpcIdentifier: !Ref TicketsVPC
+      SecurityGroupIds:
+        - !Ref TicketsVpcLatticeSecurityGroup
+      PrivateDnsEnabled: true
+      DnsOptions:
+        PrivateDnsPreference: SPECIFIED_DOMAINS_ONLY
+        PrivateDnsSpecifiedDomains:
+          - '*.amazonaws.com'
+          - '*.api.aws'
+
+  # ---------- INTERNAL LOAD BALANCER (TICKETS VPC) ----------
+  TicketsLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    # checkov:skip=CKV_AWS_91:Demo load balancer; the resource configuration's access log records every connection from the gateway
+    # checkov:skip=CKV_AWS_150:Demo load balancer, deleted with the pattern
+    # checkov:skip=CKV2_AWS_28:Internal load balancer reached only through its resource gateway, WAF not needed
+    Properties:
+      Name: !Sub alb-tickets-${Identifier}
+      Scheme: internal
+      Type: application
+      Subnets:
+        - !Ref TicketsAlbSubneta
+        - !Ref TicketsAlbSubnetb
+      SecurityGroups:
+        - !Ref TicketsAlbSecurityGroup
+      LoadBalancerAttributes:
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: 'true'
+
+  TicketsTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    # checkov:skip=CKV_AWS_378:TLS ends at the load balancer; the containers serve HTTP inside the VPC
+    Properties:
+      Name: !Sub tg-tickets-${Identifier}
+      Port: 8000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref TicketsVPC
+      HealthCheckPath: /health
+      Matcher:
+        HttpCode: '200'
+
+  # HTTPS with the public certificate for tickets.<DomainName>, the name the gateway calls
+  TicketsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref TicketsLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TicketsTargetGroup
+
+  # ---------- SECURITY GROUPS (TICKETS VPC) ----------
+  TicketsRGWSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Resource Gateway Security Group
+      VpcId: !Ref TicketsVPC
+      SecurityGroupEgress:
+        - Description: Allowing HTTPS to the load balancer
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId: !Ref TicketsAlbSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub tickets-vpc-resource-gateway-security-group-${AWS::StackName}
+
+  TicketsAlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Internal load balancer
+      VpcId: !Ref TicketsVPC
+      SecurityGroupEgress:
+        - Description: Allowing the container port to the tasks
+          IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          DestinationSecurityGroupId: !Ref TicketsTasksSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub tickets-vpc-alb-security-group-${AWS::StackName}
+
+  TicketsAlbFromResourceGateway:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref TicketsAlbSecurityGroup
+      Description: Allowing HTTPS from the resource gateway
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref TicketsRGWSecurityGroup
+
+  TicketsTasksSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Tickets MCP server tasks
+      VpcId: !Ref TicketsVPC
+      SecurityGroupEgress:
+        - Description: Allowing HTTPS (VPC Lattice and Amazon S3)
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub tickets-vpc-tasks-security-group-${AWS::StackName}
+
+  TicketsTasksFromAlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref TicketsTasksSecurityGroup
+      Description: Allowing the container port from the load balancer
+      IpProtocol: tcp
+      FromPort: 8000
+      ToPort: 8000
+      SourceSecurityGroupId: !Ref TicketsAlbSecurityGroup
+
+  TicketsVpcLatticeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC Lattice VPC association Security Group
+      VpcId: !Ref TicketsVPC
+      SecurityGroupIngress:
+        - Description: Allowing HTTPS from the tasks
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref TicketsTasksSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub tickets-vpc-vpclattice-security-group-${AWS::StackName}
+
+  # ---------- MCP SERVER (AMAZON ECS) ----------
+  TicketsTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub tickets-${AWS::StackName}
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: ARM64
+      ContainerDefinitions:
+        - Name: tickets
+          Image: !Ref TicketsImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApplicationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: tickets
+
+  # The tasks pull their image and write logs through the central endpoints
+  TicketsService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - TicketsVpcAssociation
+      - TicketsS3Endpoint
+      - TicketsListener
+    Properties:
+      ServiceName: !Sub tickets-${AWS::StackName}
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref TicketsTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref TicketsTasksSecurityGroup
+          Subnets:
+            - !Ref TicketsWorkloadSubneta
+            - !Ref TicketsWorkloadSubnetb
+      LoadBalancers:
+        - TargetGroupArn: !Ref TicketsTargetGroup
+          ContainerName: tickets
+          ContainerPort: 8000
+
+  # ========== A2A AGENT: TRIAGE (AMAZON ECS, TRIAGE VPC) ==========
+  # ---------- VPC RESOURCES (TRIAGE VPC) ----------
+  TriageVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub triage-vpc-${AWS::StackName}
+
+  'Fn::ForEach::TriageSubnetTypes':
+    - SubnetType
+    - [Workload, Alb, RGW]
+    - 'Triage${SubnetType}':
+      'Fn::ForEach::TriageAZ':
+        - AvailabilityZone
+        - [a, b]
+        - 'Triage${SubnetType}Subnet${AvailabilityZone}':
+            Type: AWS::EC2::Subnet
+            Properties:
+              VpcId: !Ref TriageVPC
+              AvailabilityZone: !Select
+                - !FindInMap [AzToIndex, !Ref AvailabilityZone, Index]
+                - !GetAZs ''
+              CidrBlock: !Select
+                - !FindInMap [SubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
+                - !Cidr [!GetAtt TriageVPC.CidrBlock, 256, 8]
+              Tags:
+                - Key: Name
+                  Value: !Sub triage-subnet-${SubnetType}-AZ${AvailabilityZone}-${AWS::StackName}
+          'Triage${SubnetType}RouteTable${AvailabilityZone}':
+            Type: AWS::EC2::RouteTable
+            Properties:
+              VpcId: !Ref TriageVPC
+              Tags:
+                - Key: Name
+                  Value: !Sub triage-rt-${SubnetType}-AZ${AvailabilityZone}-${AWS::StackName}
+          'Triage${SubnetType}RouteTableAssociation${AvailabilityZone}':
+            Type: AWS::EC2::SubnetRouteTableAssociation
+            Properties:
+              RouteTableId: !Ref
+                'Fn::Sub': 'Triage${SubnetType}RouteTable${AvailabilityZone}'
+              SubnetId: !Ref
+                'Fn::Sub': 'Triage${SubnetType}Subnet${AvailabilityZone}'
+
+  # Amazon S3 gateway endpoint (Amazon ECR image layers are stored in Amazon S3; gateway endpoints are per VPC)
+  TriageS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref TriageVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref TriageWorkloadRouteTablea
+        - !Ref TriageWorkloadRouteTableb
+
+  # ---------- VPC LATTICE CONNECTIVITY (TRIAGE VPC) ----------
+  TriageResourceGateway:
+    Type: AWS::VpcLattice::ResourceGateway
+    Properties:
+      Name: !Sub resource-gateway-triage-${Identifier}
+      IpAddressType: IPV4
+      ResourceConfigDnsResolution: IN_VPC
+      SecurityGroupIds:
+        - !Ref TriageRGWSecurityGroup
+      SubnetIds:
+        - !Ref TriageRGWSubneta
+        - !Ref TriageRGWSubnetb
+      VpcIdentifier: !Ref TriageVPC
+
+  TriageResourceConfiguration:
+    Type: AWS::VpcLattice::ResourceConfiguration
+    Properties:
+      Name: !Sub resource-config-triage-${Identifier}
+      ResourceConfigurationType: SINGLE
+      ResourceGatewayId: !Ref TriageResourceGateway
+      ProtocolType: TCP
+      PortRanges:
+        - '443'
+      ResourceConfigurationDefinition:
+        DnsResource:
+          DomainName: !GetAtt TriageLoadBalancer.DNSName
+          IpAddressType: IPV4
+
+  TriageAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vpclattice/resource-config-triage-${Identifier}
+      RetentionInDays: 7
+
+  TriageAccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    Properties:
+      ResourceIdentifier: !GetAtt TriageResourceConfiguration.Arn
+      DestinationArn: !GetAtt TriageAccessLogGroup.Arn
+
+  # VPC association: the central endpoints the tasks need (images, logs), and the gateway and the registry for the triage agent's model calls
+  TriageVpcAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkVpcAssociation
+    Properties:
+      ServiceNetworkIdentifier: !Ref ServiceNetworkId
+      VpcIdentifier: !Ref TriageVPC
+      SecurityGroupIds:
+        - !Ref TriageVpcLatticeSecurityGroup
+      PrivateDnsEnabled: true
+      DnsOptions:
+        PrivateDnsPreference: SPECIFIED_DOMAINS_ONLY
+        PrivateDnsSpecifiedDomains:
+          - '*.amazonaws.com'
+          - '*.api.aws'
+
+  # ---------- INTERNAL LOAD BALANCER (TRIAGE VPC) ----------
+  TriageLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    # checkov:skip=CKV_AWS_91:Demo load balancer; the resource configuration's access log records every connection from the gateway
+    # checkov:skip=CKV_AWS_150:Demo load balancer, deleted with the pattern
+    # checkov:skip=CKV2_AWS_28:Internal load balancer reached only through its resource gateway, WAF not needed
+    Properties:
+      Name: !Sub alb-triage-${Identifier}
+      Scheme: internal
+      Type: application
+      Subnets:
+        - !Ref TriageAlbSubneta
+        - !Ref TriageAlbSubnetb
+      SecurityGroups:
+        - !Ref TriageAlbSecurityGroup
+      LoadBalancerAttributes:
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: 'true'
+
+  TriageTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    # checkov:skip=CKV_AWS_378:TLS ends at the load balancer; the containers serve HTTP inside the VPC
+    Properties:
+      Name: !Sub tg-triage-${Identifier}
+      Port: 9000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref TriageVPC
+      HealthCheckPath: /.well-known/agent-card.json
+      Matcher:
+        HttpCode: '200'
+
+  # HTTPS with the public certificate for triage.<DomainName>, the name the gateway calls
+  TriageListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref TriageLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TriageTargetGroup
+
+  # ---------- SECURITY GROUPS (TRIAGE VPC) ----------
+  TriageRGWSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Resource Gateway Security Group
+      VpcId: !Ref TriageVPC
+      SecurityGroupEgress:
+        - Description: Allowing HTTPS to the load balancer
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId: !Ref TriageAlbSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub triage-vpc-resource-gateway-security-group-${AWS::StackName}
+
+  TriageAlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Internal load balancer
+      VpcId: !Ref TriageVPC
+      SecurityGroupEgress:
+        - Description: Allowing the container port to the tasks
+          IpProtocol: tcp
+          FromPort: 9000
+          ToPort: 9000
+          DestinationSecurityGroupId: !Ref TriageTasksSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub triage-vpc-alb-security-group-${AWS::StackName}
+
+  TriageAlbFromResourceGateway:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref TriageAlbSecurityGroup
+      Description: Allowing HTTPS from the resource gateway
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref TriageRGWSecurityGroup
+
+  TriageTasksSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Triage agent tasks
+      VpcId: !Ref TriageVPC
+      SecurityGroupEgress:
+        - Description: Allowing HTTPS (VPC Lattice and Amazon S3)
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub triage-vpc-tasks-security-group-${AWS::StackName}
+
+  TriageTasksFromAlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref TriageTasksSecurityGroup
+      Description: Allowing the container port from the load balancer
+      IpProtocol: tcp
+      FromPort: 9000
+      ToPort: 9000
+      SourceSecurityGroupId: !Ref TriageAlbSecurityGroup
+
+  TriageVpcLatticeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC Lattice VPC association Security Group
+      VpcId: !Ref TriageVPC
+      SecurityGroupIngress:
+        - Description: Allowing HTTPS from the tasks
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref TriageTasksSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub triage-vpc-vpclattice-security-group-${AWS::StackName}
+
+  # ---------- AGENT (AMAZON ECS) ----------
+  TriageTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub triage-${AWS::StackName}
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !Ref TriageRoleArn
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: ARM64
+      ContainerDefinitions:
+        - Name: triage
+          Image: !Ref TriageImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 9000
+              Protocol: tcp
+          # TCP keepalives below the VPC Lattice idle timeout, so the model client's pooled connection to the gateway stays open between requests
+          SystemControls:
+            - Namespace: net.ipv4.tcp_keepalive_time
+              Value: '60'
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            # The URL in the agent card: the triage agent through the gateway
+            - Name: PUBLIC_URL
+              Value: !Sub ${GatewayUrl}/triage/
+            # No model configured: the triage agent finds the gateway's model endpoint in AWS Agent Registry
+            - Name: CONNECTIVITY_MODE
+              Value: agentcore_gateway
+            - Name: REGISTRY_ID
+              Value: !Ref RegistryId
+            - Name: REGISTRY_ENDPOINT_URL
+              Value: !Ref RegistryEndpointUrl
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApplicationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: triage
+
+  TriageService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - TriageVpcAssociation
+      - TriageS3Endpoint
+      - TriageListener
+    Properties:
+      ServiceName: !Sub triage-${AWS::StackName}
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref TriageTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref TriageTasksSecurityGroup
+          Subnets:
+            - !Ref TriageWorkloadSubneta
+            - !Ref TriageWorkloadSubnetb
+      LoadBalancers:
+        - TargetGroupArn: !Ref TriageTargetGroup
+          ContainerName: triage
+          ContainerPort: 9000
+
+Outputs:
+  TicketsResourceConfigurationArn:
+    Description: VPC Lattice resource configuration of the tickets MCP server (the gateway's self-managed private endpoint)
+    Value: !GetAtt TicketsResourceConfiguration.Arn
+  TriageResourceConfigurationArn:
+    Description: VPC Lattice resource configuration of the triage agent (the gateway's self-managed private endpoint)
+    Value: !GetAtt TriageResourceConfiguration.Arn
+  TriageService:
+    Description: Amazon ECS service of the triage agent
+    Value: !GetAtt TriageService.Name

@@ -1,0 +1,87 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS Agent Registry and the records of the AI gateway's endpoints - its MCP endpoint, the triage agent through the gateway, and its model endpoint
+
+# The agents can only reach the gateway, so the records describe the gateway's endpoints. The records stay thin: each
+# agent gets the tools its virtual key allows from the gateway (tools/list), not from the registry.
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier for resource names
+    Default: agentic-gateway
+  HostedZoneName:
+    Type: String
+    Description: Domain of the ai-gateway custom domain name (the URL in the records, the same from every VPC that calls the gateway)
+
+Resources:
+  Registry:
+    Type: AWS::AgentRegistry::Registry
+    Properties:
+      Name: !Sub registry-${Identifier}
+      Description: Helpdesk AI gateway - tools, agents and models
+      AuthorizerType: AWS_IAM
+      # Records become discoverable as soon as they are submitted (make submit-records)
+      ApprovalConfiguration:
+        AutoApprovalRules:
+          - APPROVE_ALL
+
+  # The gateway's MCP endpoint (server.json)
+  AiGatewayToolsRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: ai-gateway-tools
+      DisplayName: Helpdesk tools through the AI gateway (MCP)
+      Description: Helpdesk tickets and employee directory tools, served by the AI gateway.
+      RecordType: MCP
+      RecordVersion: 1.0.0
+      Descriptors:
+        McpServer:
+          DataSchemaVersion: '2025-12-11'
+          Data: !Sub |
+            {"name": "internal.helpdesk/ai-gateway", "description": "Helpdesk tickets and employee directory tools, served by the AI gateway.",
+             "version": "1.0.0", "remotes": [{"type": "streamable-http", "url": "https://ai-gateway.${HostedZoneName}/mcp/"}]}
+
+  # The triage agent through the gateway (agent card)
+  AiGatewayTriageRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: ai-gateway-triage
+      DisplayName: Triage agent through the AI gateway (A2A)
+      Description: A2A agent that decides the priority of an IT issue, served by the AI gateway.
+      RecordType: AGENT
+      RecordVersion: 1.0.0
+      Descriptors:
+        A2aAgentCard:
+          DataSchemaVersion: '0.3'
+          Data: !Sub |
+            {"name": "triage", "description": "Helpdesk triage agent: decides the priority (low, medium, high) of an IT issue.",
+             "version": "1.0.0", "protocolVersion": "0.3.0", "url": "https://ai-gateway.${HostedZoneName}/a2a/triage", "preferredTransport": "JSONRPC",
+             "capabilities": {"streaming": true}, "defaultInputModes": ["text"], "defaultOutputModes": ["text"],
+             "skills": [{"id": "triage", "name": "Triage", "description": "Assign a priority to an IT issue.", "tags": ["helpdesk"]}]}
+
+  # The gateway's model endpoint (custom descriptor: OpenAI-compatible base URL and model alias)
+  AiGatewayLlmRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: ai-gateway-llm
+      DisplayName: Helpdesk model through the AI gateway
+      Description: OpenAI-compatible model endpoint of the AI gateway.
+      RecordType: CUSTOM
+      RecordVersion: 1.0.0
+      Descriptors:
+        Custom:
+          Data: !Sub |
+            {"protocol": "openai", "baseUrl": "https://ai-gateway.${HostedZoneName}/v1", "models": ["helpdesk-llm"]}
+
+Outputs:
+  RegistryId:
+    Description: AWS Agent Registry ID
+    Value: !GetAtt Registry.RegistryId
+  RecordIds:
+    Description: Registry record IDs, space-separated (submitted for approval by make submit-records)
+    Value: !Join [' ', [!GetAtt AiGatewayToolsRecord.RecordId, !GetAtt AiGatewayTriageRecord.RecordId, !GetAtt AiGatewayLlmRecord.RecordId]]

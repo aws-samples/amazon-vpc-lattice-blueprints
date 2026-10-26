@@ -1,0 +1,195 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: AgentCore Gateway - the gateway (IAM inbound authorization, policy engine in ENFORCE mode), its native targets (directory on AWS Lambda, and the model on Amazon Bedrock), its application logs, and the callers' permission to invoke it
+
+# The Lambda code is a local path, uploaded by 'aws cloudformation package' (see the Makefile)
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W3002
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier (the same as in common.yaml, which scopes the gateway role by these names)
+    Default: agentic-core
+  GatewayRoleArn:
+    Type: String
+    Description: AgentCore Gateway service role ARN
+  LambdaRoleArn:
+    Type: String
+    Description: Lambda execution role ARN
+  AgentEcsRoleArn:
+    Type: String
+    Description: Self-hosted agent (agent-ecs) task role ARN
+  AgentRuntimeRoleArn:
+    Type: String
+    Description: AgentCore Runtime agent (agent-runtime) execution role ARN
+  TriageRoleArn:
+    Type: String
+    Description: Triage agent task role ARN
+
+Resources:
+  # ========== GATEWAY ==========
+  # No protocol type: the gateway mixes MCP targets with an HTTP (A2A) and an inference target
+  Gateway:
+    Type: AWS::BedrockAgentCore::Gateway
+    Properties:
+      Name: !Sub gateway-${Identifier}
+      Description: Helpdesk tools, triage agent and model
+      RoleArn: !Ref GatewayRoleArn
+      AuthorizerType: AWS_IAM
+      PolicyEngineConfiguration:
+        Arn: !GetAtt PolicyEngine.PolicyEngineArn
+        Mode: ENFORCE
+
+  # ---------- GATEWAY POLICY ENGINE ----------
+  # Its Cedar policies are in targets.yaml: the policy engine validates them against every target, and the VPC-hosted targets are created after the backends
+  PolicyEngine:
+    Type: AWS::BedrockAgentCore::PolicyEngine
+    Properties:
+      Name: !Join ['_', ['policy_engine', !Join ['_', !Split ['-', !Ref Identifier]]]]
+      Description: Access decisions for the helpdesk gateway
+
+  # ---------- GATEWAY LOGS ----------
+  GatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vendedlogs/bedrock-agentcore/gateway/APPLICATION_LOGS/${Gateway.GatewayIdentifier}
+      RetentionInDays: 7
+
+  GatewayLogDeliverySource:
+    Type: AWS::Logs::DeliverySource
+    Properties:
+      Name: !Sub gateway-logs-${Identifier}
+      LogType: APPLICATION_LOGS
+      ResourceArn: !GetAtt Gateway.GatewayArn
+
+  GatewayLogDeliveryDestination:
+    Type: AWS::Logs::DeliveryDestination
+    Properties:
+      Name: !Sub gateway-logs-${Identifier}
+      DestinationResourceArn: !GetAtt GatewayLogGroup.Arn
+
+  GatewayLogDelivery:
+    Type: AWS::Logs::Delivery
+    Properties:
+      DeliverySourceName: !Ref GatewayLogDeliverySource
+      DeliveryDestinationArn: !GetAtt GatewayLogDeliveryDestination.Arn
+
+  # ---------- CALLERS' PERMISSION TO INVOKE THE GATEWAY ----------
+  # Here, not in common.yaml, because the gateway's ARN only exists in this stack
+  InvokeGatewayPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Roles:
+        - !Select [1, !Split ['/', !Ref AgentEcsRoleArn]]
+        - !Select [1, !Split ['/', !Ref AgentRuntimeRoleArn]]
+        - !Select [1, !Split ['/', !Ref TriageRoleArn]]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: InvokeGateway
+            Effect: Allow
+            Action: bedrock-agentcore:InvokeGateway
+            Resource: !GetAtt Gateway.GatewayArn
+
+  # ========== NATIVE TARGETS ==========
+  # ---------- TARGET: DIRECTORY (AWS LAMBDA) ----------
+  # gateway_handler: the gateway's Lambda target event (the tool's arguments, and the tool name in the context)
+  ApiDirectoryFunction:
+    Type: AWS::Lambda::Function
+    # checkov:skip=CKV_AWS_116:Demo function invoked synchronously by the gateway, no DLQ needed
+    # checkov:skip=CKV_AWS_117:Native target of the gateway, it does not need a VPC
+    # checkov:skip=CKV_AWS_115:Demo function, no reserved concurrency needed
+    # checkov:skip=CKV_AWS_173:No secrets in the environment
+    Properties:
+      FunctionName: !Sub api-directory-${Identifier}
+      Runtime: python3.14
+      Handler: lambda_function.gateway_handler
+      Role: !Ref LambdaRoleArn
+      Timeout: 30
+      Code: ../../applications/api_directory
+
+  DirectoryTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !GetAtt Gateway.GatewayIdentifier
+      Name: directory
+      Description: Employee directory API (AWS Lambda)
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
+      TargetConfiguration:
+        Mcp:
+          Lambda:
+            LambdaArn: !GetAtt ApiDirectoryFunction.Arn
+            ToolSchema:
+              InlinePayload:
+                - Name: listEmployees
+                  Description: List every employee in the directory.
+                  InputSchema:
+                    Type: object
+                - Name: getEmployee
+                  Description: Get one employee (name, department, device) by identifier.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      id:
+                        Type: string
+                        Description: Employee identifier, for example 'ana'.
+                    Required:
+                      - id
+                - Name: createEmployee
+                  Description: Add an employee to the directory.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      id:
+                        Type: string
+                        Description: Employee identifier.
+                      name:
+                        Type: string
+                        Description: Full name.
+                      department:
+                        Type: string
+                        Description: Department.
+                      device:
+                        Type: string
+                        Description: Device identifier.
+                    Required:
+                      - id
+                      - name
+
+  # ---------- TARGET: MODEL (AMAZON BEDROCK) ----------
+  ModelTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !GetAtt Gateway.GatewayIdentifier
+      Name: model
+      Description: Amazon Bedrock models (bedrock-mantle connector)
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
+      TargetConfiguration:
+        Inference:
+          Connector:
+            Source:
+              ConnectorId: bedrock-mantle
+
+Outputs:
+  GatewayId:
+    Description: AgentCore Gateway ID
+    Value: !GetAtt Gateway.GatewayIdentifier
+  GatewayArn:
+    Description: AgentCore Gateway ARN
+    Value: !GetAtt Gateway.GatewayArn
+  GatewayUrl:
+    Description: AgentCore Gateway URL, the same from every caller
+    Value: !Sub https://${Gateway.GatewayIdentifier}.gateway.bedrock-agentcore.${AWS::Region}.amazonaws.com
+  PolicyEngineId:
+    Description: AgentCore Gateway policy engine ID (its Cedar policies are in targets.yaml)
+    Value: !GetAtt PolicyEngine.PolicyEngineId
+  GatewayLogGroup:
+    Description: CloudWatch Logs group with AgentCore Gateway's application logs (requests, tool calls, target errors and policy decisions)
+    Value: !Ref GatewayLogGroup

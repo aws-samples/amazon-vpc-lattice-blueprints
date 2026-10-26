@@ -23,20 +23,6 @@ plugin "terraform" {
 
 plugin "aws" {
   enabled = true
-  version = "0.31.0"
+  version = "0.50.0"
   source  = "github.com/terraform-linters/tflint-ruleset-aws"
-}
-
-# ---------------------------------------------------------------------------
-# Justified rule suppression.
-#
-# aws_lambda_function_invalid_runtime: the AWS ruleset pinned above (v0.31.0)
-# predates the GA "python3.14" managed Lambda runtime and therefore reports it
-# as invalid. python3.14 is a deliberate, documented repo-wide pin and is a
-# real, generally available AWS Lambda runtime. The finding is a stale-ruleset
-# false positive, not a code defect, so the rule is disabled until the ruleset
-# pin is raised to a version that recognizes python3.14.
-# ---------------------------------------------------------------------------
-rule "aws_lambda_function_invalid_runtime" {
-  enabled = false
 }

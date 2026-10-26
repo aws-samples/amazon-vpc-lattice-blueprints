@@ -1,0 +1,414 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: Common items - Amazon ECR repositories, S3 bucket for packaged Lambda code, Amazon ECS cluster, application log group, IAM roles, the AI gateway secrets and the VPC Lattice managed prefix list lookup
+
+Transform: 'AWS::LanguageExtensions'
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier for secret names
+    Default: agentic-gateway
+
+Mappings:
+  SecretNames:
+    LiteLLMMaster:
+      Name: litellm-master
+    AgentEcs:
+      Name: agent-ecs
+    AgentRuntime:
+      Name: agent-runtime
+    AgentTriage:
+      Name: agent-triage
+
+Resources:
+  # ---------- ECR REPOSITORIES ----------
+  AgentRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: !Sub 'agent-${AWS::StackName}'
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: true
+
+  TriageRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: !Sub 'triage-${AWS::StackName}'
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: true
+
+  GatewayRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: !Sub 'gateway-${AWS::StackName}'
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: true
+
+  # ---------- ARTIFACTS BUCKET (aws cloudformation package) ----------
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    # checkov:skip=CKV_AWS_18:Short-lived bucket holding packaged demo Lambda code, access logging not needed
+    # checkov:skip=CKV_AWS_21:Packaged artifacts are re-uploaded on every deploy, versioning not needed
+    DeletionPolicy: Delete
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ---------- AMAZON ECS CLUSTER ----------
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub cluster-${AWS::StackName}
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  # Application logs (agents, gateway and triage)
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /${AWS::StackName}/applications
+      RetentionInDays: 7
+
+  # ---------- DEPLOY-TIME SECRETS (LITELLM MASTER KEY AND ONE VIRTUAL KEY PER CALLER) ----------
+  # The gateway creates the keys with these values at start-up (applications/litellm/entrypoint.py), and each caller
+  # reads its own key. entrypoint.py adds the sk- prefix LiteLLM expects.
+  'Fn::ForEach::Secrets':
+    - Secret
+    - [LiteLLMMaster, AgentEcs, AgentRuntime, AgentTriage]
+    - '${Secret}Key':
+        Type: AWS::SecretsManager::Secret
+        # checkov:skip=CKV2_AWS_57:Demo deploy-time key; rotation would require re-issuing virtual keys, out of scope
+        Properties:
+          Name: !Join ['-', ['gateway', !FindInMap [SecretNames, !Ref Secret, Name], 'key', !Ref Identifier]]
+          GenerateSecretString:
+            PasswordLength: 32
+            ExcludePunctuation: true
+
+  # ---------- IAM: ECS TASK EXECUTION ----------
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      # Injects the gateway's secrets into its task: master key, virtual keys and the database password (an Amazon
+      # RDS managed secret, named rds!db-*)
+      Policies:
+        - PolicyName: read-gateway-secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref LiteLLMMasterKey
+                  - !Ref AgentEcsKey
+                  - !Ref AgentRuntimeKey
+                  - !Ref AgentTriageKey
+                  - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!db-*
+
+  # ---------- IAM: ECS INFRASTRUCTURE ROLE (VPC LATTICE TARGET REGISTRATION) ----------
+  EcsInfrastructureRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonECSInfrastructureRolePolicyForVpcLattice
+
+  # ---------- IAM: GATEWAY CONSUMER PERMISSIONS (AGENTS AND TRIAGE AGENT) ----------
+  # They discover the gateway in AWS Agent Registry, and call the ai-gateway service (that permission is in
+  # gateway.yaml, scoped to the service). None of them calls Amazon Bedrock directly: the model is served by the
+  # gateway. Each role also reads only its own virtual key.
+  AgentPermissions:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DiscoverRegistryRecords
+            Effect: Allow
+            Action:
+              - agent-registry:SearchDiscoverableRegistryRecords
+              - agent-registry:ListDiscoverableRegistryRecords
+              - agent-registry:GetDiscoverableRegistryRecord
+            Resource: !Sub arn:${AWS::Partition}:agent-registry:${AWS::Region}:${AWS::AccountId}:registry/*
+
+  # ---------- IAM: SELF-HOSTED AGENT (ECS TASK ROLE) ----------
+  AgentEcsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub agent-ecs-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref AgentPermissions
+      Policies:
+        - PolicyName: read-virtual-key
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AgentEcsKey
+        # ECS Exec (the tests run commands inside the agent container)
+        - PolicyName: ecs-exec
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+
+  # ---------- IAM: AGENT ON AGENTCORE RUNTIME ----------
+  AgentRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub agent-runtime-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*
+      ManagedPolicyArns:
+        - !Ref AgentPermissions
+      Policies:
+        - PolicyName: runtime-platform
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadVirtualKey
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AgentRuntimeKey
+              - Sid: PullImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/*
+              - Sid: EcrToken
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                  - logs:DescribeLogGroups
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*
+
+  # ---------- IAM: TRIAGE AGENT (ECS TASK ROLE) ----------
+  # A backend for the helpdesk agents, and a consumer of the gateway for its own model calls
+  TriageRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub triage-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref AgentPermissions
+      Policies:
+        - PolicyName: read-virtual-key
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AgentTriageKey
+
+  # ---------- IAM: AI GATEWAY (ECS TASK ROLE) ----------
+  # The only identity that calls Amazon Bedrock. Its calls to the backends are not signed (see backends.yaml).
+  GatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-models
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+
+  # ---------- IAM: LAMBDA FUNCTIONS (MCP SERVER AND REST API) ----------
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # ---------- VPC LATTICE MANAGED PREFIX LIST (LOOKED UP AT DEPLOY TIME) ----------
+  # The gateway and triage task security groups allow VPC Lattice to reach their targets (gateway.yaml, backends.yaml)
+  VpcLatticePrefixList:
+    Type: Custom::PrefixList
+    Properties:
+      ServiceToken: !GetAtt PrefixListFunction.Arn
+      PrefixListName: !Sub com.amazonaws.${AWS::Region}.vpc-lattice
+
+  PrefixListFunction:
+    Type: AWS::Lambda::Function
+    # checkov:skip=CKV_AWS_116:CloudFormation custom resource, no DLQ needed
+    # checkov:skip=CKV_AWS_117:Calls the EC2 API only, it does not need a VPC
+    # checkov:skip=CKV_AWS_115:CloudFormation custom resource, no reserved concurrency needed
+    # checkov:skip=CKV_AWS_173:No secrets in the environment
+    Properties:
+      Runtime: python3.14
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt PrefixListFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          def handler(event, context):
+              data = {}
+              try:
+                  if event["RequestType"] != "Delete":
+                      name = event["ResourceProperties"]["PrefixListName"]
+                      lists = boto3.client("ec2").describe_managed_prefix_lists(Filters=[{"Name": "prefix-list-name", "Values": [name]}])
+                      data["PrefixListId"] = lists["PrefixLists"][0]["PrefixListId"]
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, data)
+              except Exception as error:
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(error)})
+
+  PrefixListFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: describe-prefix-lists
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ec2:DescribeManagedPrefixLists
+                Resource: '*'
+
+Outputs:
+  AgentRepositoryUri:
+    Description: Agent image repository URI
+    Value: !GetAtt AgentRepository.RepositoryUri
+  TriageRepositoryUri:
+    Description: Triage agent image repository URI
+    Value: !GetAtt TriageRepository.RepositoryUri
+  GatewayRepositoryUri:
+    Description: AI gateway (LiteLLM) image repository URI
+    Value: !GetAtt GatewayRepository.RepositoryUri
+  ArtifactsBucket:
+    Description: S3 bucket used by aws cloudformation package (empty it before deleting the stack)
+    Value: !Ref ArtifactsBucket
+  ClusterName:
+    Description: Amazon ECS cluster name
+    Value: !Ref Cluster
+  ApplicationLogGroup:
+    Description: Application log group (agents, gateway and triage)
+    Value: !Ref ApplicationLogGroup
+  VpcLatticePrefixListId:
+    Description: VPC Lattice managed prefix list ID
+    Value: !GetAtt VpcLatticePrefixList.PrefixListId
+  TaskExecutionRoleArn:
+    Description: ECS task execution role ARN
+    Value: !GetAtt TaskExecutionRole.Arn
+  EcsInfrastructureRoleArn:
+    Description: ECS infrastructure role ARN (VPC Lattice target registration)
+    Value: !GetAtt EcsInfrastructureRole.Arn
+  AgentEcsRoleArn:
+    Description: Self-hosted agent (agent-ecs) task role ARN
+    Value: !GetAtt AgentEcsRole.Arn
+  AgentRuntimeRoleArn:
+    Description: AgentCore Runtime agent (agent-runtime) execution role ARN
+    Value: !GetAtt AgentRuntimeRole.Arn
+  TriageRoleArn:
+    Description: Triage agent task role ARN
+    Value: !GetAtt TriageRole.Arn
+  GatewayRoleArn:
+    Description: AI gateway task role ARN
+    Value: !GetAtt GatewayRole.Arn
+  'Fn::ForEach::SecretOutputs':
+    - Secret
+    - [LiteLLMMaster, AgentEcs, AgentRuntime, AgentTriage]
+    - '${Secret}KeyArn':
+        Description: !Sub 'ARN of the ${Secret} key secret'
+        Value: !Ref
+          'Fn::Sub': '${Secret}Key'
+  LambdaRoleArn:
+    Description: Lambda execution role ARN
+    Value: !GetAtt LambdaRole.Arn

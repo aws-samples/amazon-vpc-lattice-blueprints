@@ -1,0 +1,385 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: Consumers - consumer VPC A (VPC association) with the self-hosted agent on Amazon ECS (agent-ecs), and consumer VPC B (service network endpoint) with the agent on AgentCore Runtime (agent-runtime)
+Transform: 'AWS::LanguageExtensions'
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier
+    Default: agentic-direct
+  ServiceNetworkId:
+    Type: String
+    Description: VPC Lattice service network ID
+  ServiceNetworkArn:
+    Type: String
+    Description: VPC Lattice service network ARN
+  AgentImageUri:
+    Type: String
+    Description: Agent image URI (ARM64)
+  ClusterName:
+    Type: String
+    Description: Amazon ECS cluster name
+  ApplicationLogGroup:
+    Type: String
+    Description: Application log group
+  TaskExecutionRoleArn:
+    Type: String
+    Description: ECS task execution role ARN
+  AgentEcsRoleArn:
+    Type: String
+    Description: Self-hosted agent (agent-ecs) task role ARN
+  AgentRuntimeRoleArn:
+    Type: String
+    Description: AgentCore Runtime agent (agent-runtime) execution role ARN
+  RegistryId:
+    Type: String
+    Description: AWS Agent Registry ID
+  RegistryEndpointUrl:
+    Type: String
+    Description: AWS Agent Registry data plane URL
+  ModelId:
+    Type: String
+    Description: Amazon Bedrock model (or inference profile) ID
+    Default: eu.anthropic.claude-haiku-5-5
+
+Mappings:
+  VpcBSubnetToIndex:
+    Workloada:
+      Index: 0
+    Workloadb:
+      Index: 1
+    Endpointa:
+      Index: 2
+    Endpointb:
+      Index: 3
+  AzToIndex:
+    a:
+      Index: 0
+    b:
+      Index: 1
+
+Resources:
+  # ========== CONSUMER VPC B: AGENT ON AGENTCORE RUNTIME (SERVICE NETWORK ENDPOINT) ==========
+  VpcB:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub consumer-vpc-b-${AWS::StackName}
+
+  # Workload subnets (AgentCore Runtime ENIs) and endpoint subnets (the service network endpoint takes a contiguous
+  # /28 per AZ for services, plus one IP per resource configuration)
+  'Fn::ForEach::VpcBSubnetTypes':
+    - SubnetType
+    - [Workload, Endpoint]
+    - 'VpcB${SubnetType}':
+      'Fn::ForEach::VpcBAZ':
+        - AvailabilityZone
+        - [a, b]
+        - 'VpcB${SubnetType}Subnet${AvailabilityZone}':
+            Type: AWS::EC2::Subnet
+            Properties:
+              VpcId: !Ref VpcB
+              AvailabilityZone: !Select
+                - !FindInMap [AzToIndex, !Ref AvailabilityZone, Index]
+                - !GetAZs ''
+              CidrBlock: !Select
+                - !FindInMap [VpcBSubnetToIndex, !Sub "${SubnetType}${AvailabilityZone}", Index]
+                - !Cidr [!GetAtt VpcB.CidrBlock, 256, 8]
+              Tags:
+                - Key: Name
+                  Value: !Sub consumer-vpc-b-subnet-${SubnetType}-AZ${AvailabilityZone}-${AWS::StackName}
+          'VpcB${SubnetType}RouteTable${AvailabilityZone}':
+            Type: AWS::EC2::RouteTable
+            Properties:
+              VpcId: !Ref VpcB
+              Tags:
+                - Key: Name
+                  Value: !Sub consumer-vpc-b-rt-${SubnetType}-AZ${AvailabilityZone}-${AWS::StackName}
+          'VpcB${SubnetType}RouteTableAssociation${AvailabilityZone}':
+            Type: AWS::EC2::SubnetRouteTableAssociation
+            Properties:
+              RouteTableId: !Ref
+                'Fn::Sub': 'VpcB${SubnetType}RouteTable${AvailabilityZone}'
+              SubnetId: !Ref
+                'Fn::Sub': 'VpcB${SubnetType}Subnet${AvailabilityZone}'
+
+  # Amazon S3 gateway endpoint (AgentCore Runtime in VPC mode pulls image layers from Amazon S3 through it)
+  VpcBS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref VpcB
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref VpcBWorkloadRouteTablea
+        - !Ref VpcBWorkloadRouteTableb
+
+  RuntimeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: AgentCore Runtime ENIs
+      VpcId: !Ref VpcB
+      SecurityGroupEgress:
+        - Description: Allowing HTTPS (service network endpoint and Amazon S3)
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub consumer-vpc-b-runtime-security-group-${AWS::StackName}
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Service network endpoint Security Group
+      VpcId: !Ref VpcB
+      SecurityGroupIngress:
+        - Description: Allowing HTTPS from the AgentCore Runtime ENIs
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref RuntimeSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub consumer-vpc-b-endpoint-security-group-${AWS::StackName}
+
+  # VPC Lattice creates DNS names specific to this endpoint for each service (the private hosted zone in dns.yaml
+  # aliases the services' custom domain names to them); private DNS covers the central AWS endpoints.
+  ServiceNetworkEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: ServiceNetwork
+      VpcId: !Ref VpcB
+      ServiceNetworkArn: !Ref ServiceNetworkArn
+      SubnetIds:
+        - !Ref VpcBEndpointSubneta
+        - !Ref VpcBEndpointSubnetb
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      PrivateDnsEnabled: true
+      DnsOptions:
+        PrivateDnsPreference: SPECIFIED_DOMAINS_ONLY
+        PrivateDnsSpecifiedDomains:
+          - '*.amazonaws.com'
+          - '*.api.aws'
+      Tags:
+        - Key: Name
+          Value: !Sub service-network-endpoint-${AWS::StackName}
+
+  AgentRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    DependsOn:
+      - ServiceNetworkEndpoint
+      - VpcBS3Endpoint
+    Properties:
+      AgentRuntimeName: !Join ['_', ['agent_runtime', !Join ['_', !Split ['-', !Ref Identifier]]]]
+      Description: Helpdesk agent (agent-runtime)
+      RoleArn: !Ref AgentRuntimeRoleArn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Ref AgentImageUri
+      NetworkConfiguration:
+        NetworkMode: VPC
+        NetworkModeConfig:
+          Subnets:
+            - !Ref VpcBWorkloadSubneta
+            - !Ref VpcBWorkloadSubnetb
+          SecurityGroups:
+            - !Ref RuntimeSecurityGroup
+      ProtocolConfiguration: HTTP
+      EnvironmentVariables:
+        AGENT_NAME: agent-runtime
+        CONNECTIVITY_MODE: direct
+        MODEL_ID: !Ref ModelId
+        # No backend URLs: the agent discovers the services in AWS Agent Registry
+        REGISTRY_ID: !Ref RegistryId
+        REGISTRY_ENDPOINT_URL: !Ref RegistryEndpointUrl
+
+  # ========== CONSUMER VPC A: SELF-HOSTED AGENT ON AMAZON ECS (VPC ASSOCIATION) ==========
+  # No internet access: the services and the AWS endpoints are all reached through VPC Lattice.
+  VpcA:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub consumer-vpc-a-${AWS::StackName}
+
+  'Fn::ForEach::VpcAAZ':
+    - AvailabilityZone
+    - [a, b]
+    - 'VpcAWorkloadSubnet${AvailabilityZone}':
+        Type: AWS::EC2::Subnet
+        Properties:
+          VpcId: !Ref VpcA
+          AvailabilityZone: !Select
+            - !FindInMap [AzToIndex, !Ref AvailabilityZone, Index]
+            - !GetAZs ''
+          CidrBlock: !Select
+            - !FindInMap [AzToIndex, !Ref AvailabilityZone, Index]
+            - !Cidr [!GetAtt VpcA.CidrBlock, 256, 8]
+          Tags:
+            - Key: Name
+              Value: !Sub consumer-vpc-a-subnet-workload-AZ${AvailabilityZone}-${AWS::StackName}
+      'VpcAWorkloadRouteTable${AvailabilityZone}':
+        Type: AWS::EC2::RouteTable
+        Properties:
+          VpcId: !Ref VpcA
+          Tags:
+            - Key: Name
+              Value: !Sub consumer-vpc-a-rt-workload-AZ${AvailabilityZone}-${AWS::StackName}
+      'VpcAWorkloadRouteTableAssociation${AvailabilityZone}':
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          RouteTableId: !Ref
+            'Fn::Sub': 'VpcAWorkloadRouteTable${AvailabilityZone}'
+          SubnetId: !Ref
+            'Fn::Sub': 'VpcAWorkloadSubnet${AvailabilityZone}'
+
+  # Amazon S3 gateway endpoint (Amazon ECR image layers)
+  VpcAS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref VpcA
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref VpcAWorkloadRouteTablea
+        - !Ref VpcAWorkloadRouteTableb
+
+  AgentSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Self-hosted agent tasks
+      VpcId: !Ref VpcA
+      SecurityGroupEgress:
+        - Description: Allowing HTTPS (VPC Lattice and Amazon S3)
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub consumer-vpc-a-agent-security-group-${AWS::StackName}
+
+  VpcLatticeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC Lattice VPC association Security Group
+      VpcId: !Ref VpcA
+      SecurityGroupIngress:
+        - Description: Allowing HTTPS from the agent tasks
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref AgentSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub consumer-vpc-a-vpclattice-security-group-${AWS::StackName}
+
+  # The private hosted zone in dns.yaml aliases the services' custom domain names to their DNS names; private DNS
+  # covers the central AWS endpoints
+  VpcLatticeVpcAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkVpcAssociation
+    Properties:
+      ServiceNetworkIdentifier: !Ref ServiceNetworkId
+      VpcIdentifier: !Ref VpcA
+      SecurityGroupIds:
+        - !Ref VpcLatticeSecurityGroup
+      PrivateDnsEnabled: true
+      DnsOptions:
+        PrivateDnsPreference: SPECIFIED_DOMAINS_ONLY
+        PrivateDnsSpecifiedDomains:
+          - '*.amazonaws.com'
+          - '*.api.aws'
+
+  AgentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub agent-ecs-${AWS::StackName}
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !Ref AgentEcsRoleArn
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: ARM64
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref AgentImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AGENT_NAME
+              Value: agent-ecs
+            - Name: CONNECTIVITY_MODE
+              Value: direct
+            - Name: MODEL_ID
+              Value: !Ref ModelId
+            # No backend URLs: the agent discovers the services in AWS Agent Registry
+            - Name: PEER_AGENT_RUNTIME_ARN
+              Value: !GetAtt AgentRuntime.AgentRuntimeArn
+            - Name: REGISTRY_ID
+              Value: !Ref RegistryId
+            - Name: REGISTRY_ENDPOINT_URL
+              Value: !Ref RegistryEndpointUrl
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApplicationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: agent-ecs
+
+  AgentService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - VpcLatticeVpcAssociation
+      - VpcAS3Endpoint
+    Properties:
+      ServiceName: !Sub agent-ecs-${AWS::StackName}
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref AgentTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref AgentSecurityGroup
+          Subnets:
+            - !Ref VpcAWorkloadSubneta
+            - !Ref VpcAWorkloadSubnetb
+
+Outputs:
+  ConsumerVpcAId:
+    Description: Consumer VPC A ID (its private hosted zone is in dns.yaml)
+    Value: !Ref VpcA
+  ConsumerVpcBId:
+    Description: Consumer VPC B ID (its private hosted zone is in dns.yaml)
+    Value: !Ref VpcB
+  ServiceNetworkEndpointId:
+    Description: Service network endpoint ID (the Makefile reads its per-service DNS names)
+    Value: !Ref ServiceNetworkEndpoint
+  AgentRuntimeArn:
+    Description: ARN of the agent on AgentCore Runtime (agent-runtime)
+    Value: !GetAtt AgentRuntime.AgentRuntimeArn
+  AgentEcsService:
+    Description: Amazon ECS service of the self-hosted agent (agent-ecs)
+    Value: !GetAtt AgentService.Name

@@ -41,6 +41,10 @@ To make this concrete, **every pattern in this repository intentionally uses `10
 
 The one exception is [Network Segment Access with Tunnel Endpoints](./patterns/3-advanced_architectures/2-network_segment_tunnel_endpoint/): the consumer reaches the provider's real IP addresses through a tunnel, so that pattern uses non-overlapping VPCs (`10.0.0.0/16` and `10.1.0.0/16`).
 
+### Connect AI agents to tools, APIs and other agents
+
+Agentic architectures multiply service-to-service connections: every agent calls tools (MCP servers), REST APIs, other agents (A2A) and models, owned by different teams in different VPCs and accounts. VPC Lattice simplifies that network (one service network, no peering or routing, overlapping CIDRs, AWS endpoints centralized once) and authorizes each request on the agent's IAM identity, so you can focus on the granular controls of an AI gateway and on discovery with AWS Agent Registry. The [Agentic Architectures](./patterns/5-agentic_architectures/) section shows it with no AI gateway, with a self-hosted AI gateway, and with Amazon Bedrock AgentCore Gateway, for agents self-hosted on Amazon ECS and on Amazon Bedrock AgentCore Runtime.
+
 ## Consumption
 
 Amazon VPC Lattice Blueprints have been designed to be consumed in the following manners:
@@ -59,10 +63,11 @@ Amazon VPC Lattice Blueprints have been designed to be consumed in the following
 | [2. Multi-AWS Account](./patterns/2-multi_account/) | Cross-account sharing of a Lambda service and an Aurora resource configuration via AWS RAM, in centralized and distributed models | CloudFormation, Terraform |
 | [3. Advanced Architectures](./patterns/3-advanced_architectures/) | Real-world architectures that go beyond the basic consumer–producer setup | CloudFormation, Terraform |
 | [4. Auth Policies & SigV4](./patterns/4-auth_policies/) | Reference toolkit (not a deployable pattern) for identity-based access control: how to SigV4-sign requests and a cookbook of auth policies to apply to any pattern. Every service-exposing pattern ships `AWS_IAM` auth with an open policy, ready to lock down | Reference |
+| [5. Agentic Architectures](./patterns/5-agentic_architectures/) | Agents connecting to MCP servers, REST APIs and other agents, with no AI gateway, through a self-hosted AI gateway (LiteLLM as the example), and through Amazon Bedrock AgentCore Gateway | CloudFormation, Terraform |
 
 ## Which pattern do I need?
 
-Browse the [Patterns](#patterns) table above to see what's available: patterns 1-3 are complete, deployable examples with testing and cleanup steps, and pattern 4 is a reference toolkit you apply on top of any of them.
+Browse the [Patterns](#patterns) table above to see what's available: patterns 1-3 and 5 are complete, deployable examples with testing and cleanup steps, and pattern 4 is a reference toolkit you apply on top of any of them.
 
 To match your **specific** use case to the right pattern, the fastest path is to ask your preferred AI agent and model: install the [agent skill](./skills/vpc-lattice-blueprints/) (or give it [`SKILLS.md`](./SKILLS.md) as pasted context — see the tip at the top of this README) and describe your scenario. With that context the agent can reason about VPC Lattice, recommend the pattern that fits, and explain how to compose or secure it. An agent reading this repository remotely can start from [`llms.txt`](./llms.txt), the index of every pattern; an agent working in a local clone can start from [`AGENTS.md`](./AGENTS.md).
 
@@ -119,6 +124,7 @@ Costs vary by pattern, but the main drivers across the published blueprints are:
 - **Amazon EKS** (EKS pattern): the **EKS control plane** (per-hour, per-cluster), the **managed node group** EC2 instance-hours, and the **NAT gateway** noted above. This is the most expensive pattern to run.
 - **AWS PrivateLink tunnel endpoint** (Network Segment Access pattern): hourly per endpoint plus per GB processed (see [AWS PrivateLink pricing](https://aws.amazon.com/privatelink/pricing/)), plus resource gateway data processing.
 - **CloudWatch Logs (access logging)**: every pattern that creates a service network and/or service enables [VPC Lattice access logging](https://docs.aws.amazon.com/vpc-lattice/latest/ug/monitoring-access-logs.html) **by default** to a CloudWatch Logs log group (`/aws/vpclattice/<identifier>`), and the Network Segment Access pattern logs its resource configuration the same way. This incurs CloudWatch Logs vended-logs pricing (ingestion + storage) while deployed. The log group is created and destroyed with the pattern.
+- **Agentic Architectures**: Amazon ECS Fargate tasks (agents, backends and the self-hosted AI gateway), an Amazon Bedrock AgentCore Runtime agent, centralized interface VPC endpoints, model invocations in Amazon Bedrock, an Amazon RDS for PostgreSQL database (Self-Hosted AI Gateway) and two internal Application Load Balancers (AgentCore Gateway).
 - **Multiple accounts**: the [Multi-AWS Account](./patterns/2-multi_account/) patterns deploy resources in two or three accounts, so the above costs apply in each account involved.
 
 ### Multi-AZ cost note

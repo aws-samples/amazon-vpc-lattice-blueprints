@@ -1,0 +1,88 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS Agent Registry and the records of AgentCore Gateway's endpoints - its MCP endpoint, the triage agent through the gateway, and its model endpoint
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier for resource names
+    Default: agentic-core
+  GatewayUrl:
+    Type: String
+    Description: AgentCore Gateway URL (the URL in the records, the same from every caller)
+  ModelId:
+    Type: String
+    Description: Model ID the gateway's model target serves, as listed by Amazon Bedrock's OpenAI-compatible endpoint (bedrock-mantle). Use a model your organization approves for your use case.
+    Default: anthropic.claude-haiku-4-5
+
+Resources:
+  Registry:
+    Type: AWS::AgentRegistry::Registry
+    Properties:
+      Name: !Sub registry-${Identifier}
+      Description: Helpdesk AgentCore Gateway - tools, agents and models
+      AuthorizerType: AWS_IAM
+      # Records become discoverable as soon as they are submitted (make submit-records)
+      ApprovalConfiguration:
+        AutoApprovalRules:
+          - APPROVE_ALL
+
+  # The gateway's MCP endpoint (server.json)
+  GatewayToolsRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: gateway-tools
+      DisplayName: Helpdesk tools through the AgentCore Gateway (MCP)
+      Description: Helpdesk tickets and employee directory tools, served by the AgentCore Gateway.
+      RecordType: MCP
+      RecordVersion: 1.0.0
+      Descriptors:
+        McpServer:
+          DataSchemaVersion: '2025-12-11'
+          Data: !Sub |
+            {"name": "internal.helpdesk/agentcore-gateway", "description": "Helpdesk tickets and employee directory tools, served by the AgentCore Gateway.",
+             "version": "1.0.0", "remotes": [{"type": "streamable-http", "url": "${GatewayUrl}/mcp"}]}
+
+  # The triage agent through the gateway (agent card): the gateway forwards <gateway>/triage/<path> to the agent
+  GatewayTriageRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: gateway-triage
+      DisplayName: Triage agent through the AgentCore Gateway (A2A)
+      Description: A2A agent that decides the priority of an IT issue, served by the AgentCore Gateway.
+      RecordType: AGENT
+      RecordVersion: 1.0.0
+      Descriptors:
+        A2aAgentCard:
+          DataSchemaVersion: '0.3'
+          Data: !Sub |
+            {"name": "triage", "description": "Helpdesk triage agent: decides the priority (low, medium, high) of an IT issue.",
+             "version": "1.0.0", "protocolVersion": "0.3.0", "url": "${GatewayUrl}/triage/", "preferredTransport": "JSONRPC",
+             "capabilities": {"streaming": true}, "defaultInputModes": ["text"], "defaultOutputModes": ["text"],
+             "skills": [{"id": "triage", "name": "Triage", "description": "Assign a priority to an IT issue.", "tags": ["helpdesk"]}]}
+
+  # The gateway's model endpoint (custom descriptor: Anthropic Messages API base URL and model)
+  GatewayLlmRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: gateway-llm
+      DisplayName: Helpdesk model through the AgentCore Gateway
+      Description: Model endpoint of the AgentCore Gateway (Anthropic Messages API).
+      RecordType: CUSTOM
+      RecordVersion: 1.0.0
+      Descriptors:
+        Custom:
+          Data: !Sub |
+            {"protocol": "anthropic", "baseUrl": "${GatewayUrl}/inference", "models": ["${ModelId}"]}
+
+Outputs:
+  RegistryId:
+    Description: AWS Agent Registry ID
+    Value: !GetAtt Registry.RegistryId
+  RecordIds:
+    Description: Registry record IDs, space-separated (submitted for approval by make submit-records)
+    Value: !Join [' ', [!GetAtt GatewayToolsRecord.RecordId, !GetAtt GatewayTriageRecord.RecordId, !GetAtt GatewayLlmRecord.RecordId]]

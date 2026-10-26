@@ -92,3 +92,34 @@ patterns:
       service network, so auth policies don't apply to it. Auth decisions are
       recorded in access logs.
     iac: [Reference]
+
+  - name: Agentic Architectures
+    description: >
+      AI agents connecting to tools (MCP servers), REST APIs, other agents
+      (A2A) and models across VPCs and accounts, with VPC Lattice carrying the
+      connectivity, AWS Agent Registry the discovery, and an optional AI
+      gateway the per-tool, per-agent and per-model decisions. Each pattern
+      runs a self-hosted agent on Amazon ECS and an agent on Amazon Bedrock
+      AgentCore Runtime.
+    iac: [CloudFormation, Terraform]
+    sub_patterns:
+      - name: Direct Agent Connectivity
+        description: >
+          No AI gateway: the MCP server, REST API and A2A agent are VPC Lattice
+          services, and auth policies on the agents' IAM roles decide which
+          agent may call which service. AWS endpoints are centralized as VPC
+          resources, and the agents discover the backends in AWS Agent
+          Registry.
+      - name: Self-Hosted AI Gateway
+        description: >
+          A self-hosted AI gateway (LiteLLM as the example) published as a VPC
+          Lattice service: the agents reach it in one service network, and it
+          reaches the backends and the model in another, so it is the only
+          path to them. The gateway decides per tool, agent and model.
+      - name: Amazon Bedrock AgentCore Gateway
+        description: >
+          A managed AI gateway: native targets (AWS Lambda, Amazon Bedrock)
+          where AgentCore has them, one centralized gateway endpoint for agents
+          in a VPC, and backends in their own VPCs reached through self-managed
+          VPC Lattice resource configurations, shareable with other accounts
+          over AWS RAM.

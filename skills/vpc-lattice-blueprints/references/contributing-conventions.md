@@ -8,6 +8,7 @@ Read this **only** when modifying or adding patterns in the repository. [`CONVEN
 - **IaC parity:** every published deployable pattern ships **both** CloudFormation and Terraform, except where `blueprint.yaml` declares otherwise (EKS is Terraform-only: Helm + Kubernetes Gateway API CRDs can't be represented cleanly in pure CloudFormation). The manifest is the source of truth; never claim an implementation that doesn't exist.
 - **Naming:** `"<role>-<thing>-${var.identifier}"`, hyphens not underscores, identifier suffix last (security groups: `"<vpc>-<purpose>-security-group-${var.identifier}"`).
 - **Version pins:** module and provider versions, the Lambda runtime, and the Terraform core floor are pinned uniformly across patterns — take current values from `CONVENTIONS.md`, do not hardcode them from memory.
+- **Shared agentic application code:** `patterns/5-agentic_architectures/applications/` is built by every agentic pattern; select pattern-specific behaviour through configuration (connectivity mode, registry record fields), and check every pattern still takes its own code path.
 - **Generated docs:** each Terraform pattern's `README.md` is **generated** by terraform-docs from `.header.md` — never hand-edit it; edit `.header.md` and regenerate.
 - **License header:** MIT-0 header at the top of every source file.
 - **Access logging on by default:** service network/service patterns create a CloudWatch Logs group `/aws/vpclattice/<identifier>`, destroyed on teardown.

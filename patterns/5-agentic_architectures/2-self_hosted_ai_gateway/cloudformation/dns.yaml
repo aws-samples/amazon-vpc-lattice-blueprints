@@ -1,0 +1,84 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: DNS resolution of the ai-gateway service's custom domain name - private hosted zones for the VPCs that call the gateway
+Transform: 'AWS::LanguageExtensions'
+
+# The gateway has one URL (its custom domain name, the one in the registry records) for every VPC that calls it. Each
+# VPC resolves it to its own way into the 'agents' service network:
+# - consumer VPC A and the provider VPC (VPC associations): the DNS name VPC Lattice gives the service
+# - consumer VPC B (service network endpoint): the DNS name VPC Lattice gives the service on the endpoint
+# The endpoint's DNS name and hosted zone ID are read by the Makefile from the endpoint's associations.
+
+Parameters:
+  HostedZoneName:
+    Type: String
+    Description: Domain of the ai-gateway custom domain name (for example, example.com)
+  ConsumerVpcAId:
+    Type: String
+    Description: Consumer VPC A ID (agent-ecs, VPC association)
+  ProviderVpcId:
+    Type: String
+    Description: Provider VPC ID (triage agent, VPC association)
+  ConsumerVpcBId:
+    Type: String
+    Description: Consumer VPC B ID (agent-runtime, service network endpoint)
+  ServiceDnsName:
+    Type: String
+    Description: ai-gateway service DNS name
+  ServiceDnsHostedZoneId:
+    Type: String
+    Description: Hosted zone ID of the ai-gateway service DNS name
+  EndpointDnsName:
+    Type: String
+    Description: DNS name of the ai-gateway service on the service network endpoint
+  EndpointDnsHostedZoneId:
+    Type: String
+    Description: Hosted zone ID of the ai-gateway DNS name on the endpoint
+
+Resources:
+  # ---------- PRIVATE HOSTED ZONE (VPC ASSOCIATIONS: CONSUMER VPC A AND PROVIDER VPC) ----------
+  VpcAssociationsHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref HostedZoneName
+      VPCs:
+        - VPCId: !Ref ConsumerVpcAId
+          VPCRegion: !Ref AWS::Region
+        - VPCId: !Ref ProviderVpcId
+          VPCRegion: !Ref AWS::Region
+
+  # ---------- PRIVATE HOSTED ZONE (CONSUMER VPC B) ----------
+  ConsumerVpcBHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref HostedZoneName
+      VPCs:
+        - VPCId: !Ref ConsumerVpcBId
+          VPCRegion: !Ref AWS::Region
+
+  # ---------- RECORDS ----------
+  # Per record type (A, AAAA): one alias in each private hosted zone
+  'Fn::ForEach::RecordTypes':
+    - RecordType
+    - [A, AAAA]
+    - 'VpcAssociationsAiGateway${RecordType}':
+        Type: AWS::Route53::RecordSet
+        Properties:
+          HostedZoneId: !Ref VpcAssociationsHostedZone
+          Name: !Sub ai-gateway.${HostedZoneName}
+          Type: !Ref RecordType
+          AliasTarget:
+            DNSName: !Ref ServiceDnsName
+            HostedZoneId: !Ref ServiceDnsHostedZoneId
+            EvaluateTargetHealth: false
+      'ConsumerVpcBAiGateway${RecordType}':
+        Type: AWS::Route53::RecordSet
+        Properties:
+          HostedZoneId: !Ref ConsumerVpcBHostedZone
+          Name: !Sub ai-gateway.${HostedZoneName}
+          Type: !Ref RecordType
+          AliasTarget:
+            DNSName: !Ref EndpointDnsName
+            HostedZoneId: !Ref EndpointDnsHostedZoneId
+            EvaluateTargetHealth: false

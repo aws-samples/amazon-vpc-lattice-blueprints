@@ -1,0 +1,94 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: DNS resolution of the VPC Lattice services' custom domain names - one private hosted zone per consumer VPC
+Transform: 'AWS::LanguageExtensions'
+
+# Each service has one URL (its custom domain name, the one in its registry record) for both consumer VPCs. Each
+# consumer VPC resolves it to its own way into the service network:
+# - consumer VPC A (VPC association): the DNS name VPC Lattice gives each service
+# - consumer VPC B (service network endpoint): the DNS name VPC Lattice gives each service on the endpoint
+# The DNS names and hosted zone IDs are read by the Makefile (backends.yaml outputs and the endpoint's associations).
+
+Parameters:
+  HostedZoneName:
+    Type: String
+    Description: Domain of the services' custom domain names (for example, example.com)
+  ConsumerVpcAId:
+    Type: String
+    Description: Consumer VPC A ID (agent-ecs, VPC association)
+  ConsumerVpcBId:
+    Type: String
+    Description: Consumer VPC B ID (agent-runtime, service network endpoint)
+  ServiceDnsNames:
+    Type: CommaDelimitedList
+    Description: Services' DNS names (mcp-tickets, api-directory, agent-triage - in this order)
+  ServiceDnsHostedZoneIds:
+    Type: CommaDelimitedList
+    Description: Hosted zone IDs of the services' DNS names (same order)
+  EndpointDnsNames:
+    Type: CommaDelimitedList
+    Description: DNS names of the services on the service network endpoint (same order)
+  EndpointDnsHostedZoneIds:
+    Type: CommaDelimitedList
+    Description: Hosted zone IDs of the services' DNS names on the endpoint (same order)
+
+Mappings:
+  Services:
+    McpTickets:
+      Name: mcp-tickets
+      Index: 0
+    ApiDirectory:
+      Name: api-directory
+      Index: 1
+    AgentTriage:
+      Name: agent-triage
+      Index: 2
+
+Resources:
+  # ---------- PRIVATE HOSTED ZONE (CONSUMER VPC A) ----------
+  ConsumerVpcAHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref HostedZoneName
+      VPCs:
+        - VPCId: !Ref ConsumerVpcAId
+          VPCRegion: !Ref AWS::Region
+
+  # ---------- PRIVATE HOSTED ZONE (CONSUMER VPC B) ----------
+  ConsumerVpcBHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref HostedZoneName
+      VPCs:
+        - VPCId: !Ref ConsumerVpcBId
+          VPCRegion: !Ref AWS::Region
+
+  # ---------- RECORDS ----------
+  # Per service and record type (A, AAAA): one alias in each private hosted zone
+  'Fn::ForEach::Services':
+    - Service
+    - [McpTickets, ApiDirectory, AgentTriage]
+    - 'Fn::ForEach::RecordTypes':
+        - RecordType
+        - [A, AAAA]
+        - '${Service}ConsumerVpcA${RecordType}':
+            Type: AWS::Route53::RecordSet
+            Properties:
+              HostedZoneId: !Ref ConsumerVpcAHostedZone
+              Name: !Join ['.', [!FindInMap [Services, !Ref Service, Name], !Ref HostedZoneName]]
+              Type: !Ref RecordType
+              AliasTarget:
+                DNSName: !Select [!FindInMap [Services, !Ref Service, Index], !Ref ServiceDnsNames]
+                HostedZoneId: !Select [!FindInMap [Services, !Ref Service, Index], !Ref ServiceDnsHostedZoneIds]
+                EvaluateTargetHealth: false
+          '${Service}ConsumerVpcB${RecordType}':
+            Type: AWS::Route53::RecordSet
+            Properties:
+              HostedZoneId: !Ref ConsumerVpcBHostedZone
+              Name: !Join ['.', [!FindInMap [Services, !Ref Service, Name], !Ref HostedZoneName]]
+              Type: !Ref RecordType
+              AliasTarget:
+                DNSName: !Select [!FindInMap [Services, !Ref Service, Index], !Ref EndpointDnsNames]
+                HostedZoneId: !Select [!FindInMap [Services, !Ref Service, Index], !Ref EndpointDnsHostedZoneIds]
+                EvaluateTargetHealth: false

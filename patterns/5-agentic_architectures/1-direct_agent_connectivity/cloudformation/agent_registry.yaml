@@ -1,0 +1,103 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS Agent Registry and the records of the MCP server, the REST API and the triage agent
+
+# The registry can't synchronize records from private endpoints (it can't reach a VPC Lattice service), so the
+# records are created here, at deployment time, with their descriptors inline. Discovery tells an agent what exists
+# and at which URL; VPC Lattice still decides whether the call is allowed.
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier for resource names
+    Default: agentic-direct
+  HostedZoneName:
+    Type: String
+    Description: Domain of the services' custom domain names (the URLs in the records, the same from both consumer VPCs)
+
+Resources:
+  Registry:
+    Type: AWS::AgentRegistry::Registry
+    Properties:
+      Name: !Sub registry-${Identifier}
+      Description: Helpdesk tools, APIs and agents
+      AuthorizerType: AWS_IAM
+      # Records become discoverable as soon as they are submitted (make submit-records)
+      ApprovalConfiguration:
+        AutoApprovalRules:
+          - APPROVE_ALL
+
+  # MCP server record (server.json + tools)
+  McpTicketsRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: mcp-tickets
+      DisplayName: Helpdesk tickets (MCP)
+      Description: MCP server to create and list helpdesk tickets.
+      RecordType: MCP
+      RecordVersion: 1.0.0
+      Descriptors:
+        McpServer:
+          DataSchemaVersion: '2025-12-11'
+          Data: !Sub |
+            {"name": "internal.helpdesk/tickets", "description": "Create and list helpdesk tickets.", "version": "1.0.0",
+             "remotes": [{"type": "streamable-http", "url": "https://mcp-tickets.${HostedZoneName}/mcp"}]}
+          AdditionalData:
+            Tools:
+              DataSchemaVersion: '2025-06-18'
+              Data: |
+                {"tools": [
+                  {"name": "create_ticket", "description": "Open a helpdesk ticket for an employee.",
+                   "inputSchema": {"type": "object", "properties": {"employee_id": {"type": "string"}, "summary": {"type": "string"}, "priority": {"type": "string"}}, "required": ["employee_id", "summary"]}},
+                  {"name": "list_tickets", "description": "List the open helpdesk tickets.",
+                   "inputSchema": {"type": "object", "properties": {"employee_id": {"type": "string"}}}}
+                ]}
+
+  # REST API record (custom descriptor: base URL and operations)
+  ApiDirectoryRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: api-directory
+      DisplayName: Employee directory (REST API)
+      Description: REST API to look up and create employees.
+      RecordType: CUSTOM
+      RecordVersion: 1.0.0
+      Descriptors:
+        Custom:
+          Data: !Sub |
+            {"protocol": "openapi", "baseUrl": "https://api-directory.${HostedZoneName}",
+             "operations": [
+               {"operationId": "listEmployees", "method": "GET", "path": "/employees"},
+               {"operationId": "getEmployee", "method": "GET", "path": "/employees/{id}"},
+               {"operationId": "createEmployee", "method": "POST", "path": "/employees"}
+             ]}
+
+  # A2A agent record (agent card)
+  AgentTriageRecord:
+    Type: AWS::AgentRegistry::RegistryRecord
+    Properties:
+      RegistryId: !GetAtt Registry.RegistryId
+      Name: agent-triage
+      DisplayName: Triage agent (A2A)
+      Description: A2A agent that decides the priority of an IT issue.
+      RecordType: AGENT
+      RecordVersion: 1.0.0
+      Descriptors:
+        A2aAgentCard:
+          DataSchemaVersion: '0.3'
+          Data: !Sub |
+            {"name": "triage", "description": "Helpdesk triage agent: decides the priority (low, medium, high) of an IT issue.",
+             "version": "1.0.0", "protocolVersion": "0.3.0", "url": "https://agent-triage.${HostedZoneName}/", "preferredTransport": "JSONRPC",
+             "capabilities": {"streaming": true}, "defaultInputModes": ["text"], "defaultOutputModes": ["text"],
+             "skills": [{"id": "triage", "name": "Triage", "description": "Assign a priority to an IT issue.", "tags": ["helpdesk"]}]}
+
+Outputs:
+  RegistryId:
+    Description: AWS Agent Registry ID
+    Value: !GetAtt Registry.RegistryId
+  RecordIds:
+    Description: Registry record IDs, space-separated (submitted for approval by make submit-records)
+    Value: !Join [' ', [!GetAtt McpTicketsRecord.RecordId, !GetAtt ApiDirectoryRecord.RecordId, !GetAtt AgentTriageRecord.RecordId]]

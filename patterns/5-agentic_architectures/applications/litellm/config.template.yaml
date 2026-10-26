@@ -1,0 +1,41 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+# LiteLLM configuration for the self-hosted AI gateway pattern. The placeholders are filled in by entrypoint.py
+# from the task's environment variables at start-up.
+
+model_list:
+  # One model alias for the agents, served by Amazon Bedrock through the centralized bedrock-runtime endpoint
+  - model_name: helpdesk-llm
+    litellm_params:
+      model: bedrock/converse/${MODEL_ID}
+      aws_region_name: ${AWS_REGION}
+
+mcp_servers:
+  # MCP server published as a VPC Lattice service (backends service network)
+  tickets:
+    url: "${TICKETS_URL}"
+    transport: "http"
+    description: "Helpdesk tickets (create and list)."
+  # REST API published as a VPC Lattice service, exposed to the agents as MCP tools from its OpenAPI spec
+  directory:
+    url: "${DIRECTORY_URL}"
+    spec_path: "/app/openapi.json"
+    auth_type: "none"
+    description: "Employee directory."
+
+agents:
+  # A2A agent published as a VPC Lattice service (backends service network)
+  - agent_name: triage
+    agent_card_params:
+      name: "triage"
+      description: "Helpdesk triage agent: decides the priority of an IT issue."
+      url: "${TRIAGE_URL}"
+      protocolVersion: "0.3"
+
+litellm_settings:
+  # The backends resolve to VPC Lattice link-local addresses, so allow their hostnames explicitly
+  user_url_allowed_hosts: ${ALLOWED_HOSTS}
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # DATABASE_HOST, DATABASE_USERNAME, DATABASE_PASSWORD and DATABASE_NAME come from the environment

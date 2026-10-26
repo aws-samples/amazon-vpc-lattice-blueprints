@@ -40,8 +40,8 @@ The skill never derives a checkout path from its installed directory and never f
 |---|---|
 | Manifest source repository | https://github.com/aws-samples/amazon-vpc-lattice-blueprints |
 | Manifest source revision | commit `5009984` (tag `v1.1.0`) |
-| Manifest SHA-256 | `94ef67f974db9a6b66c99421069e7358862223438d91abecf424ffbb876b687c` |
-| Snapshot generated | 2026-10-17 |
+| Manifest SHA-256 | `e47a173a1ccea05cbea6e421c5aaab50b4743d0ceb4c905e5e7824893a5355e2` |
+| Snapshot generated | 2026-10-26 |
 
 Maintainers: when `blueprint.yaml` changes, regenerate the snapshot and update this table:
 

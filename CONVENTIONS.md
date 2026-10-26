@@ -65,6 +65,7 @@ Notes:
 - The terraform-docs configuration is shared at the repo root: `.config/.terraform-docs.yaml` (`formatter: markdown`, `header-from: .header.md`, `output.file: "README.md"`).
 - A pattern may split `main.tf` into per-role files when that makes each part easier to read (e.g. Centralized VPC Endpoints: `centralized_endpoints.tf`, `consumer_group.tf`, `consumer_single.tf`), keeping a small `main.tf` for the common items.
 - Shared Terraform modules live **only** in `patterns/tf_modules/`. Do not introduce a second shared-module root.
+- The Agentic Architectures section keeps the application code its patterns build and deploy (agents, tools, triage agent, AI gateway configuration) in one shared `patterns/5-agentic_architectures/applications/` directory. Every pattern of the section uses it, so a pattern selects its behaviour through configuration (the agent's connectivity mode, or the fields of a registry record) rather than a copy of the code, and a change there is checked against every pattern of the section.
 
 ---
 
@@ -84,7 +85,7 @@ Conventions:
 
 - **Modules → exact pin** with an explicit `=` operator (e.g. `version = "= 4.7.3"`), making the exact-pin intent unambiguous.
 - **Providers → single floor** (`>= x.y.z`). Raise all patterns to the agreed floor; never lower it.
-- **Pattern-specific floors**: a pattern that needs a newer provider feature raises only its own floor, and is listed here. Centralized VPC Endpoints uses `hashicorp/aws >= 6.50.0` (resource gateway `resource_config_dns_resolution`). Network Segment Access with Tunnel Endpoints uses `hashicorp/aws >= 6.50.0` and `hashicorp/awscc >= 1.103.0` (CIDR resource configuration and tunnel VPC endpoint). It also pins `aws-ia/vpc/aws = 4.9.0`.
+- **Pattern-specific floors**: a pattern that needs a newer provider feature raises only its own floor, and is listed here. Centralized VPC Endpoints uses `hashicorp/aws >= 6.50.0` (resource gateway `resource_config_dns_resolution`). Network Segment Access with Tunnel Endpoints uses `hashicorp/aws >= 6.50.0` and `hashicorp/awscc >= 1.103.0` (CIDR resource configuration and tunnel VPC endpoint). It also pins `aws-ia/vpc/aws = 4.9.0`. The Agentic Architectures patterns use `hashicorp/aws >= 6.69.0` (AgentCore Gateway private endpoints, AgentCore Runtime, AWS Agent Registry) and `hashicorp/awscc >= 1.106.0` (AWS Agent Registry records), and pin `aws-ia/vpc/aws = 4.9.0` (subnets by Availability Zone ID). The AgentCore Gateway pattern uses `hashicorp/aws >= 6.70.0` (HTTP passthrough and inference gateway targets) and `hashicorp/time >= 0.12.0` (a wait for IAM propagation before the gateway is created). The Self-Hosted AI Gateway pattern pins the LiteLLM container image by tag and digest, and also uses `hashicorp/random >= 3.6.0`.
 - Terraform core: `required_version = ">= 1.3.0"` is uniform across every `providers.tf` and is left unchanged — **except EKS**, which uses `>= 1.4.0` because it relies on the `terraform_data` resource (Terraform 1.4+).
 - The rule for choosing a value is "highest currently-used stable value, applied uniformly." `python3.14` is a GA AWS Lambda managed runtime.
 
@@ -120,7 +121,7 @@ Every pattern that creates a service network and/or service **enables an access 
 - **Mechanism:**
   - Terraform: `aws_vpclattice_access_log_subscription`
   - CloudFormation: `AWS::VpcLattice::AccessLogSubscription`
-- **Scope:** prefer service-network-level logging where a single-account pattern owns the service network, so one subscription covers the demo. Multi-account patterns log at the level owned by the account that creates the network/service. Network Segment Access with Tunnel Endpoints has neither a service network nor a service, so it logs at the resource configuration scope.
+- **Scope:** prefer service-network-level logging where a single-account pattern owns the service network, so one subscription covers the demo. Multi-account patterns log at the level owned by the account that creates the network/service. Network Segment Access with Tunnel Endpoints has neither a service network nor a service, so it logs at the resource configuration scope. The Amazon Bedrock AgentCore Gateway pattern also logs each backend's resource configuration (the backend owner's view) and delivers AgentCore Gateway's application logs to CloudWatch Logs.
 - **Cost:** access logging uses CloudWatch vended-logs pricing — each pattern's docs include a cost note.
 - **Teardown:** the log group is created and destroyed with the pattern; teardown docs mention removing it.
 
@@ -173,7 +174,7 @@ Rules of thumb:
 
 Several files describe the same set of patterns, for humans and for agents. Keep them in step **in the same change**:
 
-- When a pattern is added, removed, or renamed, update the [Patterns table in `README.md`](README.md#patterns), the category README (`patterns/<category>/README.md`), [`llms.txt`](llms.txt), and the agent skill package's `references/pattern-selection.md` under [`skills/vpc-lattice-blueprints/`](skills/vpc-lattice-blueprints/). A pattern missing from `llms.txt` is a bug.
+- When a pattern is added, removed, or renamed, update the [Patterns table in `README.md`](README.md#patterns), the category README (`patterns/<category>/README.md`), [`llms.txt`](llms.txt), and the agent skill package under [`skills/vpc-lattice-blueprints/`](skills/vpc-lattice-blueprints/): its catalog `assets/blueprint.yaml` (and the snapshot SHA-256 in the package README) and `references/pattern-selection.md`. A pattern missing from `llms.txt` is a bug.
 - [`SKILLS.md`](SKILLS.md) is an **agent-facing skill file** that teaches VPC Lattice itself. It restates a few facts that are authoritative here — the **DNS ranges** (section 6) and the **EKS parity exception** (section 7). When you change one of them in this file, update `SKILLS.md` too.
 - [`AGENTS.md`](AGENTS.md) is the guide for an agent working in a local clone: it summarizes the rules above and the validation steps, and links here rather than restating values. When a convention or a validation step changes, update `AGENTS.md`.
 

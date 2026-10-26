@@ -1,0 +1,486 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: Workloads published as VPC Lattice services - MCP server (tickets), REST API (directory) and A2A agent (triage)
+Transform: 'AWS::LanguageExtensions'
+
+# The Lambda code is a local path, uploaded by 'aws cloudformation package' (see the Makefile)
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W3002
+
+Parameters:
+  Identifier:
+    Type: String
+    Description: Short pattern identifier for VPC Lattice resource names
+    Default: agentic-direct
+  ServiceNetworkId:
+    Type: String
+    Description: VPC Lattice service network ID
+  HostedZoneName:
+    Type: String
+    Description: Domain of the services' custom domain names (for example, example.com gives mcp-tickets.example.com)
+  CertificateArn:
+    Type: String
+    Description: ARN of the ACM certificate for the services' HTTPS listeners. It must cover *.<HostedZoneName>.
+  AgentEcsRoleArn:
+    Type: String
+    Description: Self-hosted agent (agent-ecs) role ARN
+  AgentRuntimeRoleArn:
+    Type: String
+    Description: AgentCore Runtime agent (agent-runtime) role ARN
+  LambdaRoleArn:
+    Type: String
+    Description: Lambda execution role ARN
+  TaskExecutionRoleArn:
+    Type: String
+    Description: ECS task execution role ARN
+  TriageRoleArn:
+    Type: String
+    Description: Triage agent task role ARN
+  EcsInfrastructureRoleArn:
+    Type: String
+    Description: ECS infrastructure role ARN (VPC Lattice target registration)
+  ClusterName:
+    Type: String
+    Description: Amazon ECS cluster name
+  ApplicationLogGroup:
+    Type: String
+    Description: Application log group
+  TriageImageUri:
+    Type: String
+    Description: Triage agent image URI (ARM64)
+  ModelId:
+    Type: String
+    Description: Amazon Bedrock model (or inference profile) ID
+    Default: eu.anthropic.claude-haiku-5-5
+
+Mappings:
+  AzToIndex:
+    a:
+      Index: 0
+    b:
+      Index: 1
+  WorkloadNames:
+    McpTickets:
+      Name: mcp-tickets
+    ApiDirectory:
+      Name: api-directory
+    AgentTriage:
+      Name: agent-triage
+
+Resources:
+  # ---------- MCP SERVER: TICKETS (AWS LAMBDA) ----------
+  McpTicketsFunction:
+    Type: AWS::Lambda::Function
+    # checkov:skip=CKV_AWS_116:Demo function invoked synchronously by VPC Lattice, no DLQ needed
+    # checkov:skip=CKV_AWS_117:Lambda target of a VPC Lattice service, it does not need a VPC
+    # checkov:skip=CKV_AWS_115:Demo function, no reserved concurrency needed
+    # checkov:skip=CKV_AWS_173:No secrets in the environment
+    Properties:
+      FunctionName: !Sub mcp-tickets-${Identifier}
+      Runtime: python3.14
+      Handler: lambda_function.lambda_handler
+      Role: !Ref LambdaRoleArn
+      Timeout: 30
+      Code: ../../applications/mcp_tickets
+
+  McpTicketsTargetGroup:
+    Type: AWS::VpcLattice::TargetGroup
+    Properties:
+      Name: !Sub target-group-mcp-tickets-${Identifier}
+      Type: LAMBDA
+      Config:
+        LambdaEventStructureVersion: V2
+      Targets:
+        - Id: !GetAtt McpTicketsFunction.Arn
+
+  # ---------- REST API: DIRECTORY (AWS LAMBDA) ----------
+  ApiDirectoryFunction:
+    Type: AWS::Lambda::Function
+    # checkov:skip=CKV_AWS_116:Demo function invoked synchronously by VPC Lattice, no DLQ needed
+    # checkov:skip=CKV_AWS_117:Lambda target of a VPC Lattice service, it does not need a VPC
+    # checkov:skip=CKV_AWS_115:Demo function, no reserved concurrency needed
+    # checkov:skip=CKV_AWS_173:No secrets in the environment
+    Properties:
+      FunctionName: !Sub api-directory-${Identifier}
+      Runtime: python3.14
+      Handler: lambda_function.lambda_handler
+      Role: !Ref LambdaRoleArn
+      Timeout: 30
+      Code: ../../applications/api_directory
+
+  ApiDirectoryTargetGroup:
+    Type: AWS::VpcLattice::TargetGroup
+    Properties:
+      Name: !Sub target-group-api-directory-${Identifier}
+      Type: LAMBDA
+      Config:
+        LambdaEventStructureVersion: V2
+      Targets:
+        - Id: !GetAtt ApiDirectoryFunction.Arn
+
+  # ---------- VPC LATTICE SERVICES ----------
+  # Per workload: 1 service (AWS_IAM, custom domain name <name>.<HostedZoneName>), 1 HTTPS listener and 1 service
+  # network association.
+  'Fn::ForEach::Workloads':
+    - Workload
+    - [McpTickets, ApiDirectory, AgentTriage]
+    - '${Workload}Service':
+        Type: AWS::VpcLattice::Service
+        Properties:
+          Name: !Join
+            - '-'
+            - - service
+              - !FindInMap [WorkloadNames, !Ref Workload, Name]
+              - !Ref Identifier
+          AuthType: AWS_IAM
+          CustomDomainName: !Join ['.', [!FindInMap [WorkloadNames, !Ref Workload, Name], !Ref HostedZoneName]]
+          CertificateArn: !Ref CertificateArn
+      '${Workload}Listener':
+        Type: AWS::VpcLattice::Listener
+        Properties:
+          Name: https-listener
+          Protocol: HTTPS
+          Port: 443
+          ServiceIdentifier: !Ref
+            'Fn::Sub': '${Workload}Service'
+          DefaultAction:
+            Forward:
+              TargetGroups:
+                - TargetGroupIdentifier: !Ref
+                    'Fn::Sub': '${Workload}TargetGroup'
+                  Weight: 100
+      '${Workload}ServiceAssociation':
+        Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
+        Properties:
+          ServiceIdentifier: !Ref
+            'Fn::Sub': '${Workload}Service'
+          ServiceNetworkIdentifier: !Ref ServiceNetworkId
+
+  # ---------- AUTH POLICIES ----------
+  # Each service owner decides which agent roles may call it (and, for the REST API, which HTTP methods). MCP sends
+  # every call as a POST to one path, so an MCP server is allowed or denied whole.
+  McpTicketsAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref McpTicketsService
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowBothAgents
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Ref AgentEcsRoleArn
+                - !Ref AgentRuntimeRoleArn
+            Action: vpc-lattice-svcs:Invoke
+            Resource: !Sub '${McpTicketsService.Arn}/*'
+
+  ApiDirectoryAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref ApiDirectoryService
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEcsAgentReadWrite
+            Effect: Allow
+            Principal:
+              AWS: !Ref AgentEcsRoleArn
+            Action: vpc-lattice-svcs:Invoke
+            Resource: !Sub '${ApiDirectoryService.Arn}/*'
+          - Sid: AllowRuntimeAgentReadOnly
+            Effect: Allow
+            Principal:
+              AWS: !Ref AgentRuntimeRoleArn
+            Action: vpc-lattice-svcs:Invoke
+            Resource: !Sub '${ApiDirectoryService.Arn}/*'
+            Condition:
+              StringEquals:
+                vpc-lattice-svcs:RequestMethod: GET
+
+  AgentTriageAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref AgentTriageService
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowBothAgents
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Ref AgentEcsRoleArn
+                - !Ref AgentRuntimeRoleArn
+            Action: vpc-lattice-svcs:Invoke
+            Resource: !Sub '${AgentTriageService.Arn}/*'
+
+  # ---------- A2A AGENT: TRIAGE (AMAZON ECS) ----------
+  # Provider VPC: the triage tasks are a VPC Lattice target, and the VPC also joins the service network as a consumer
+  # so the triage agent reaches Amazon Bedrock, Amazon ECR and Amazon CloudWatch Logs through the central endpoints.
+  ProviderVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub provider-vpc-${AWS::StackName}
+
+  'Fn::ForEach::AZ':
+    - AvailabilityZone
+    - [a, b]
+    - 'WorkloadSubnet${AvailabilityZone}':
+        Type: AWS::EC2::Subnet
+        Properties:
+          VpcId: !Ref ProviderVPC
+          AvailabilityZone: !Select
+            - !FindInMap [AzToIndex, !Ref AvailabilityZone, Index]
+            - !GetAZs ''
+          CidrBlock: !Select
+            - !FindInMap [AzToIndex, !Ref AvailabilityZone, Index]
+            - !Cidr [!GetAtt ProviderVPC.CidrBlock, 256, 8]
+          Tags:
+            - Key: Name
+              Value: !Sub provider-subnet-workload-AZ${AvailabilityZone}-${AWS::StackName}
+      'WorkloadRouteTable${AvailabilityZone}':
+        Type: AWS::EC2::RouteTable
+        Properties:
+          VpcId: !Ref ProviderVPC
+          Tags:
+            - Key: Name
+              Value: !Sub provider-rt-workload-AZ${AvailabilityZone}-${AWS::StackName}
+      'WorkloadRouteTableAssociation${AvailabilityZone}':
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          RouteTableId: !Ref
+            'Fn::Sub': 'WorkloadRouteTable${AvailabilityZone}'
+          SubnetId: !Ref
+            'Fn::Sub': 'WorkloadSubnet${AvailabilityZone}'
+
+  # Amazon S3 gateway endpoint (Amazon ECR image layers are stored in Amazon S3; gateway endpoints are per VPC)
+  ProviderS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref ProviderVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref WorkloadRouteTablea
+        - !Ref WorkloadRouteTableb
+
+  ProviderVpcLatticeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC Lattice VPC association Security Group
+      VpcId: !Ref ProviderVPC
+      SecurityGroupIngress:
+        - Description: Allowing HTTPS from the triage tasks
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref TriageSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub provider-vpc-vpclattice-security-group-${AWS::StackName}
+
+  ProviderVpcAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkVpcAssociation
+    Properties:
+      ServiceNetworkIdentifier: !Ref ServiceNetworkId
+      VpcIdentifier: !Ref ProviderVPC
+      SecurityGroupIds:
+        - !Ref ProviderVpcLatticeSecurityGroup
+      PrivateDnsEnabled: true
+      DnsOptions:
+        PrivateDnsPreference: SPECIFIED_DOMAINS_ONLY
+        PrivateDnsSpecifiedDomains:
+          - '*.amazonaws.com'
+
+  TriageSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Triage agent tasks
+      VpcId: !Ref ProviderVPC
+      SecurityGroupIngress:
+        - Description: Allowing A2A traffic from VPC Lattice
+          IpProtocol: tcp
+          FromPort: 9000
+          ToPort: 9000
+          SourcePrefixListId: !GetAtt VpcLatticePrefixList.PrefixListId
+      SecurityGroupEgress:
+        - Description: Allowing HTTPS (central endpoints and Amazon S3)
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub provider-vpc-triage-security-group-${AWS::StackName}
+
+  # VPC Lattice managed prefix list ID (looked up at deploy time)
+  VpcLatticePrefixList:
+    Type: Custom::PrefixList
+    Properties:
+      ServiceToken: !GetAtt PrefixListFunction.Arn
+      PrefixListName: !Sub com.amazonaws.${AWS::Region}.vpc-lattice
+
+  PrefixListFunction:
+    Type: AWS::Lambda::Function
+    # checkov:skip=CKV_AWS_116:CloudFormation custom resource, no DLQ needed
+    # checkov:skip=CKV_AWS_117:Calls the EC2 API only, it does not need a VPC
+    # checkov:skip=CKV_AWS_115:CloudFormation custom resource, no reserved concurrency needed
+    # checkov:skip=CKV_AWS_173:No secrets in the environment
+    Properties:
+      Runtime: python3.14
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt PrefixListFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          def handler(event, context):
+              data = {}
+              try:
+                  if event["RequestType"] != "Delete":
+                      name = event["ResourceProperties"]["PrefixListName"]
+                      lists = boto3.client("ec2").describe_managed_prefix_lists(Filters=[{"Name": "prefix-list-name", "Values": [name]}])
+                      data["PrefixListId"] = lists["PrefixLists"][0]["PrefixListId"]
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, data)
+              except Exception as error:
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(error)})
+
+  PrefixListFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: describe-prefix-lists
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ec2:DescribeManagedPrefixLists
+                Resource: '*'
+
+  AgentTriageTargetGroup:
+    Type: AWS::VpcLattice::TargetGroup
+    Properties:
+      Name: !Sub target-group-agent-triage-${Identifier}
+      Type: IP
+      Config:
+        Port: 9000
+        Protocol: HTTP
+        ProtocolVersion: HTTP1
+        IpAddressType: IPV4
+        VpcIdentifier: !Ref ProviderVPC
+        HealthCheck:
+          Enabled: true
+          Path: /.well-known/agent-card.json
+          Protocol: HTTP
+
+  TriageTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub triage-${AWS::StackName}
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !Ref TriageRoleArn
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: ARM64
+      ContainerDefinitions:
+        - Name: triage
+          Image: !Ref TriageImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 9000
+              Protocol: tcp
+              Name: a2a
+          # TCP keepalives below the VPC Lattice idle timeout for resources, so the model client's pooled connection
+          # to the centralized bedrock-runtime endpoint stays open between requests
+          SystemControls:
+            - Namespace: net.ipv4.tcp_keepalive_time
+              Value: '60'
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: MODEL_ID
+              Value: !Ref ModelId
+            - Name: PUBLIC_URL
+              Value: !Sub 'https://agent-triage.${HostedZoneName}/'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApplicationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: triage
+
+  TriageService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ProviderVpcAssociation
+      - ProviderS3Endpoint
+    Properties:
+      ServiceName: !Sub triage-${AWS::StackName}
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref TriageTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref TriageSecurityGroup
+          Subnets:
+            - !Ref WorkloadSubneta
+            - !Ref WorkloadSubnetb
+      VpcLatticeConfigurations:
+        - RoleArn: !Ref EcsInfrastructureRoleArn
+          TargetGroupArn: !GetAtt AgentTriageTargetGroup.Arn
+          PortName: a2a
+
+Outputs:
+  # URLs of the services (custom domain names), the same from both consumer VPCs (dns.yaml) and in the registry records (agent_registry.yaml)
+  McpTicketsUrl:
+    Description: MCP server URL (tickets)
+    Value: !Sub 'https://mcp-tickets.${HostedZoneName}/mcp'
+  ApiDirectoryUrl:
+    Description: REST API URL (directory)
+    Value: !Sub 'https://api-directory.${HostedZoneName}'
+  AgentTriageUrl:
+    Description: A2A agent URL (triage)
+    Value: !Sub 'https://agent-triage.${HostedZoneName}'
+  # DNS name VPC Lattice gives each service, and its hosted zone (aliases in consumer VPC A, dns.yaml)
+  ServiceDnsNames:
+    Description: Services' DNS names, comma-separated (mcp-tickets, api-directory, agent-triage - in this order)
+    Value: !Join [',', [!GetAtt McpTicketsService.DnsEntry.DomainName, !GetAtt ApiDirectoryService.DnsEntry.DomainName, !GetAtt AgentTriageService.DnsEntry.DomainName]]
+  ServiceDnsHostedZoneIds:
+    Description: Hosted zone IDs of the services' DNS names, comma-separated (same order)
+    Value: !Join [',', [!GetAtt McpTicketsService.DnsEntry.HostedZoneId, !GetAtt ApiDirectoryService.DnsEntry.HostedZoneId, !GetAtt AgentTriageService.DnsEntry.HostedZoneId]]
+  McpTicketsServiceArn:
+    Description: MCP server (tickets) service ARN
+    Value: !GetAtt McpTicketsService.Arn
+  ApiDirectoryServiceArn:
+    Description: REST API (directory) service ARN
+    Value: !GetAtt ApiDirectoryService.Arn
+  AgentTriageServiceArn:
+    Description: A2A agent (triage) service ARN
+    Value: !GetAtt AgentTriageService.Arn
