@@ -6,8 +6,6 @@ This pattern connects AI agents directly to the tools, APIs and agents they call
 
 ![Direct Agent Connectivity](../../../images/pattern5_architecture1.png)
 
-> **Note**: To compare this pattern with the others in this section, with and without an AI gateway, see the [Agentic Architectures overview](../).
-
 ## Simple and secure agent connectivity
 
 Three AWS capabilities together cover what agents need to find and call their backends securely:

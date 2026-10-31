@@ -2,25 +2,11 @@
 
 This pattern puts a self-hosted AI gateway between the agents and everything they call, with VPC Lattice making the gateway the only way through. The agents reach the gateway as a VPC Lattice **service** in one service network, and the gateway reaches the tools, APIs, agents and model in a second one, so every call is authorized by VPC Lattice at both hops and governed by the gateway in between.
 
-> **Note**: The pattern uses [LiteLLM](https://docs.litellm.ai/) as an example of a self-hosted AI gateway, to keep the implementation simple. It doesn't cover how to use LiteLLM: it shows how to place a self-hosted AI gateway in VPC Lattice. Other gateways follow the same pattern: publish the gateway as the `ai-gateway` service and describe its endpoints in AWS Agent Registry.
-
 > **Use case**: an IT helpdesk agent looks up an employee in the **directory** API, opens a ticket with the **tickets** MCP server, and asks the **triage** agent for a priority, all through the gateway. The agents have no gateway configuration: they find the gateway's endpoints in AWS Agent Registry on every request, and the gateway decides with each agent's virtual key which models, tools and agents it may use.
 
-```mermaid
-flowchart LR
-  A["agent-ecs<br/>(consumer VPC A, VPC association)"] --> SNA["'agents' service network"]
-  B["agent-runtime<br/>(consumer VPC B, service network endpoint)"] --> SNA
-  SNA -->|"ai-gateway service"| G["AI gateway<br/>(LiteLLM on Amazon ECS, gateway VPC)"]
-  SNA -->|"VPC resources"| R["agent-registry, ecr, logs, sts, secretsmanager, ssmmessages"]
-  G --> SNB["'backends' service network"]
-  SNB -->|"gateway -> MCP"| T["mcp-tickets<br/>(AWS Lambda)"]
-  SNB -->|"gateway -> API"| D["api-directory<br/>(AWS Lambda)"]
-  SNB -->|"gateway -> agent (A2A)"| X["agent-triage<br/>(Amazon ECS, provider VPC)"]
-  SNB -->|"VPC resources"| E["bedrock-runtime, ecr, logs, sts, secretsmanager"]
-  X -.->|"its own model calls"| SNA
-```
+![Self-Hosted AI Gateway](../../../images/pattern5_architecture2.png)
 
-> **Note**: To compare this pattern with the others in this section, with and without an AI gateway, see the [Agentic Architectures overview](../).
+> **Note**: The pattern uses [LiteLLM](https://docs.litellm.ai/) as an example of a self-hosted AI gateway, to keep the implementation simple. It doesn't cover how to use LiteLLM: it shows how to place a self-hosted AI gateway in VPC Lattice. Other gateways follow the same pattern: publish the gateway as the `ai-gateway` service and describe its endpoints in AWS Agent Registry.
 
 ## Governed agent connectivity through an AI gateway
 
