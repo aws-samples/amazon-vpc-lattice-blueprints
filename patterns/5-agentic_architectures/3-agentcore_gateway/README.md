@@ -4,19 +4,7 @@ This pattern shows how VPC Lattice simplifies private connectivity around an [Am
 
 > **Use case**: an IT helpdesk agent looks up an employee in the **directory** API, opens a ticket with the **tickets** MCP server, and asks the **triage** agent for a priority, all through AgentCore Gateway. The agents have no AgentCore Gateway configuration: they find AgentCore Gateway's endpoints in AWS Agent Registry on every request, and the AgentCore Gateway policy decides with each caller's IAM identity which tools, agents and models it may use.
 
-```mermaid
-flowchart LR
-  A["agent-ecs<br/>(consumer VPC A, VPC association)"] --> SN["Service network"]
-  SN -->|"VPC resources"| EP["Endpoints VPC: AgentCore Gateway, agent-registry,<br/>ecr, logs, sts, ssmmessages"]
-  EP --> GW["AgentCore Gateway<br/>(IAM inbound, Cedar policy)"]
-  R["agent-runtime<br/>(AgentCore Runtime, no VPC)"] -->|"IAM, direct"| GW
-  GW -->|"Lambda target"| D["directory<br/>(AWS Lambda)"]
-  GW -->|"Inference target"| M["Amazon Bedrock model"]
-  GW -->|"MCP target, private endpoint"| RC1["tickets resource configuration"]
-  GW -->|"A2A target, private endpoint"| RC2["triage resource configuration"]
-  RC1 --> T["tickets MCP server<br/>(Amazon ECS, tickets VPC)"]
-  RC2 --> X["triage A2A agent<br/>(Amazon ECS, triage VPC)"]
-```
+![Amazon Bedrock AgentCore Gateway](../../../images/pattern5_architecture3.png)
 
 > **Note**: Some AgentCore integrations are native and need no VPC Lattice: an agent on AgentCore Runtime without a VPC calls AgentCore Gateway directly with its IAM role (use VPC mode only when the agent must also reach private resources itself), and AWS Lambda functions and Amazon Bedrock models are native AgentCore Gateway targets. Using them directly is the best practice, and this pattern does so, so the VPC Lattice parts show where a VPC is involved. To compare this pattern with the others in this section, see the [Agentic Architectures overview](../).
 
