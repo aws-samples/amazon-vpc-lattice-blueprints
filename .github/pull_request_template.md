@@ -30,6 +30,7 @@
 - [ ] CloudFormation and Terraform implementations are in parity, or the exception is stated in the pattern README and the pattern table (as for EKS).
 - [ ] The catalogs agree, per [Catalog and agent-index synchronization](../CONVENTIONS.md#9-catalog-and-agent-index-synchronization): the `README.md` pattern table, the category README, `llms.txt`, and the skill package's `references/pattern-selection.md`.
 - [ ] Version pins follow [CONVENTIONS.md](../CONVENTIONS.md#3-version-pins); any pattern-specific floor is listed there.
+- [ ] The versions the changed patterns use are the newest compatible, tested releases, or this pull request says which newer release was held back and why.
 - [ ] Every new IaC source file carries the MIT-0 license header.
 - [ ] Secure defaults are kept: IMDSv2, encrypted EBS root volumes, access logging on by default, and `AWS_IAM` with an open auth policy on service-exposing patterns.
 - [ ] The pattern README's **Testing**, **Cost**, and **Cleanup** sections reflect any resource changes.

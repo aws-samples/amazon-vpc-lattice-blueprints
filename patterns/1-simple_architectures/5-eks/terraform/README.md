@@ -106,6 +106,7 @@ After deployment, follow the [Testing Connectivity](../README.md#testing-connect
 | [aws_vpc_security_group_ingress_rule.nodes_from_vpclattice_ipv6](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
 | [aws_vpclattice_access_log_subscription.service_network_access_logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpclattice_access_log_subscription) | resource |
 | [helm_release.gateway_api_controller](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release) | resource |
+| [terraform_data.gateway_api_crds](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [terraform_data.kubernetes_manifest](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
 | [aws_ec2_managed_prefix_list.vpclattice_ipv4](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ec2_managed_prefix_list) | data source |
@@ -120,8 +121,8 @@ After deployment, follow the [Testing Connectivity](../README.md#testing-connect
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_aws_region"></a> [aws\_region](#input\_aws\_region) | AWS Region to use in the example. | `string` | `"eu-west-1"` | no |
-| <a name="input_cluster_version"></a> [cluster\_version](#input\_cluster\_version) | Kubernetes version for the EKS cluster. | `string` | `"1.35"` | no |
-| <a name="input_gateway_api_crds_version"></a> [gateway\_api\_crds\_version](#input\_gateway\_api\_crds\_version) | Upstream Kubernetes Gateway API standard CRD bundle version to install (gateway.networking.k8s.io). | `string` | `"v1.1.0"` | no |
+| <a name="input_cluster_version"></a> [cluster\_version](#input\_cluster\_version) | Kubernetes version for the EKS cluster. | `string` | `"1.37"` | no |
+| <a name="input_gateway_api_crds_version"></a> [gateway\_api\_crds\_version](#input\_gateway\_api\_crds\_version) | Upstream Kubernetes Gateway API standard CRD bundle version to install (gateway.networking.k8s.io). | `string` | `"v1.5.1"` | no |
 | <a name="input_identifier"></a> [identifier](#input\_identifier) | Project identifier. | `string` | `"eks"` | no |
 | <a name="input_vpc"></a> [vpc](#input\_vpc) | Information about the VPCs. | `any` | <pre>{<br/>  "cidr_block": "10.0.0.0/16",<br/>  "endpoints_subnet_netmask": 24,<br/>  "instance_type": "t3.micro",<br/>  "number_azs": 2,<br/>  "private_subnet_netmask": 24,<br/>  "public_subnet_netmask": 28<br/>}</pre> | no |
 

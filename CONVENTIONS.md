@@ -73,6 +73,13 @@ Notes:
 
 A single pinned set is applied to every pattern. **Modules are exact-pinned with `=`; providers use a single floor `>=`.** The Lambda runtime is an exact identifier string.
 
+**Keep the pins current.** The values in this section record what the patterns use today; they are not a ceiling. Every change to a pattern checks the versions that pattern uses (Terraform modules and providers, Helm charts, CRD bundles, the EKS Kubernetes version, container images, Lambda runtimes) against their latest stable releases, and moves to the newest one that is compatible and tested:
+
+- **Compatible**: the release notes and upgrade guides show no breaking change that affects the pattern, or the pattern is adapted to the change in the same pull request. Versions that depend on each other move together.
+- **Tested**: the static checks in [Validate a change](AGENTS.md#validate-a-change) pass, and the pattern is deployed and passes its README tests whenever the bump changes what gets deployed or runs (a provider or module, a controller, a CRD bundle, a Kubernetes version, an image, a runtime).
+- **Scope**: a version only one pattern uses moves in that pattern's change. A shared pin in the table below is raised for every pattern at once, so a pattern that needs a newer one before then raises only its own floor (see pattern-specific floors).
+- **Record it**: a bump updates this section in the same change. If the newest release is not yet compatible, keep the current pin and say why in the pull request.
+
 | Dependency | Pin | Form |
 |------------|-----|------|
 | `aws-ia/vpc/aws` (module) | `4.7.3` | `version = "= 4.7.3"` (exact) |
@@ -86,8 +93,9 @@ Conventions:
 - **Modules → exact pin** with an explicit `=` operator (e.g. `version = "= 4.7.3"`), making the exact-pin intent unambiguous.
 - **Providers → single floor** (`>= x.y.z`). Raise all patterns to the agreed floor; never lower it.
 - **Pattern-specific floors**: a pattern that needs a newer provider feature raises only its own floor, and is listed here. Centralized VPC Endpoints uses `hashicorp/aws >= 6.50.0` (resource gateway `resource_config_dns_resolution`). Network Segment Access with Tunnel Endpoints uses `hashicorp/aws >= 6.50.0` and `hashicorp/awscc >= 1.103.0` (CIDR resource configuration and tunnel VPC endpoint). It also pins `aws-ia/vpc/aws = 4.9.0`. The Agentic Architectures patterns use `hashicorp/aws >= 6.69.0` (AgentCore Gateway private endpoints, AgentCore Runtime, AWS Agent Registry) and `hashicorp/awscc >= 1.106.0` (AWS Agent Registry records), and pin `aws-ia/vpc/aws = 4.9.0` (subnets by Availability Zone ID). The AgentCore Gateway pattern uses `hashicorp/aws >= 6.70.0` (HTTP passthrough and inference gateway targets) and `hashicorp/time >= 0.12.0` (a wait for IAM propagation before the gateway is created). The Self-Hosted AI Gateway pattern pins the LiteLLM container image by tag and digest, and also uses `hashicorp/random >= 3.6.0`.
+- **EKS cluster and in-cluster components**: the EKS pattern runs Kubernetes `1.37`, and pins the Amazon VPC Lattice Gateway API Controller Helm chart at `v2.1.4` and the Kubernetes Gateway API standard CRD bundle at `v1.5.1`. Bump the controller and the CRD bundle together: controller v2.1.x is built against Gateway API v1.5 and rejects older CRDs.
 - Terraform core: `required_version = ">= 1.3.0"` is uniform across every `providers.tf` and is left unchanged — **except EKS**, which uses `>= 1.4.0` because it relies on the `terraform_data` resource (Terraform 1.4+).
-- The rule for choosing a value is "highest currently-used stable value, applied uniformly." `python3.14` is a GA AWS Lambda managed runtime.
+- The rule for choosing a value is "latest stable release that is compatible and tested" (see **Keep the pins current** above), with shared pins applied uniformly. `python3.14` is a GA AWS Lambda managed runtime.
 
 ---
 
