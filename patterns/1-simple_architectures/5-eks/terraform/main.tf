@@ -153,6 +153,7 @@ resource "aws_eks_cluster" "this" {
   # checkov:skip=CKV_AWS_38:Public endpoint open (0.0.0.0/0) is acceptable for this demo - restrict public_access_cidrs in production.
   # checkov:skip=CKV_AWS_58:Demo cluster stores no sensitive Kubernetes Secrets; KMS envelope encryption omitted for simplicity.
   # checkov:skip=CKV_AWS_37:Control-plane logging omitted to avoid CloudWatch cost in this demo; set enabled_cluster_log_types in production.
+  # checkov:skip=CKV_AWS_339:False positive - Checkov's hardcoded version list stops at 1.35; 1.37 is in EKS standard support (aws eks describe-cluster-versions).
   name                          = "eks-cluster-${var.identifier}"
   version                       = var.cluster_version
   role_arn                      = aws_iam_role.cluster.arn
@@ -326,12 +327,41 @@ resource "aws_eks_pod_identity_association" "controller" {
   role_arn        = aws_iam_role.controller.arn
 }
 
+# ---------- GATEWAY API CRDS ----------
+# The controller exits at startup if the Gateway API CRDs (including TLSRoute v1) are missing, so they are installed before the Helm release.
+resource "terraform_data" "gateway_api_crds" {
+  input = {
+    cluster_name = aws_eks_cluster.this.name
+    region       = var.aws_region
+    crds_version = var.gateway_api_crds_version
+  }
+
+  triggers_replace = [var.gateway_api_crds_version]
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    command     = <<EOT
+set -euo pipefail
+aws eks update-kubeconfig --name ${self.input.cluster_name} --region ${self.input.region}
+# Gateway API standard channel bundle (includes TLSRoute from v1.5). Server-side apply, as upstream recommends for these CRDs.
+kubectl apply --server-side -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${self.input.crds_version}/standard-install.yaml"
+kubectl wait --for=condition=Established --timeout=60s \
+  crd/gatewayclasses.gateway.networking.k8s.io \
+  crd/gateways.gateway.networking.k8s.io \
+  crd/httproutes.gateway.networking.k8s.io \
+  crd/grpcroutes.gateway.networking.k8s.io \
+  crd/tlsroutes.gateway.networking.k8s.io
+EOT
+  }
+}
+
 # ---------- AWS GATEWAY API CONTROLLER (HELM) ----------
 resource "helm_release" "gateway_api_controller" {
-  name             = "gateway-api-controller"
-  repository       = "oci://public.ecr.aws/aws-application-networking-k8s"
-  chart            = "aws-gateway-controller-chart"
-  version          = "v1.1.0"
+  name       = "gateway-api-controller"
+  repository = "oci://public.ecr.aws/aws-application-networking-k8s"
+  chart      = "aws-gateway-controller-chart"
+  # v2.1.x is built against Gateway API v1.5 and rejects older CRDs - keep var.gateway_api_crds_version at v1.5 or later.
+  version          = "v2.1.4"
   namespace        = local.controller_namespace
   create_namespace = true
 
@@ -374,6 +404,7 @@ resource "helm_release" "gateway_api_controller" {
 
   depends_on = [
     aws_eks_cluster.this,
+    terraform_data.gateway_api_crds,
     aws_eks_pod_identity_association.controller,
     aws_iam_role_policy_attachment.controller,
     aws_vpc_security_group_ingress_rule.nodes_from_vpclattice_ipv4,
@@ -381,14 +412,13 @@ resource "helm_release" "gateway_api_controller" {
   ]
 }
 
-# ---------- GATEWAY API CRDS + GATEWAY/HTTPROUTE + SAMPLE APP ----------
+# ---------- GATEWAY/HTTPROUTE + SAMPLE APP ----------
 resource "terraform_data" "kubernetes_manifest" {
   input = {
     cluster_name     = aws_eks_cluster.this.name
     region           = var.aws_region
     manifest         = local.rendered_manifest
     gateway_manifest = local.rendered_gateway
-    crds_version     = var.gateway_api_crds_version
   }
 
   triggers_replace = [local.rendered_manifest]
@@ -398,9 +428,6 @@ resource "terraform_data" "kubernetes_manifest" {
     command     = <<EOT
 set -euo pipefail
 aws eks update-kubeconfig --name ${self.input.cluster_name} --region ${self.input.region}
-for crd in gatewayclasses gateways httproutes referencegrants grpcroutes; do
-  kubectl apply -f "https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/${self.input.crds_version}/config/crd/standard/gateway.networking.k8s.io_$${crd}.yaml"
-done
 cat <<'MANIFEST' | kubectl apply -f -
 ${self.input.manifest}
 MANIFEST

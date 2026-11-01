@@ -23,7 +23,7 @@ variable "cluster_version" {
   type        = string
   description = "Kubernetes version for the EKS cluster."
 
-  default = "1.35"
+  default = "1.37"
 }
 
 variable "vpc" {
@@ -45,5 +45,5 @@ variable "gateway_api_crds_version" {
   type        = string
   description = "Upstream Kubernetes Gateway API standard CRD bundle version to install (gateway.networking.k8s.io)."
 
-  default = "v1.1.0"
+  default = "v1.5.1"
 }
