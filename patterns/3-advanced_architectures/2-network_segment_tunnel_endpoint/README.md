@@ -2,17 +2,7 @@
 
 This pattern shares a whole **network segment** (a list of CIDR ranges) from a provider VPC and reaches it from a consumer VPC through a **tunnel VPC endpoint**. The provider describes the segment once, as a VPC Lattice **CIDR-type resource configuration** behind a resource gateway, instead of creating one resource configuration per resource. Any host inside the segment is reachable, which suits resources that are ephemeral or not known in advance (monitoring fleets, file distribution, vendor access to a subnet).
 
-```mermaid
-flowchart LR
-  subgraph consumer["Consumer VPC (10.0.0.0/16)"]
-    C["EC2 instance<br/>gnv0 (GENEVE device)"] -->|"GENEVE, UDP 6081"| E["Tunnel VPC endpoint<br/>(1 ENI per AZ)"]
-  end
-  subgraph provider["Provider VPC (10.1.0.0/16)"]
-    G["Resource gateway (IN_VPC)"] -->|"TCP 80"| H1["Segment host<br/>10.1.2.x"]
-    G -->|"TCP 80"| H2["Segment host<br/>10.1.3.x"]
-  end
-  E -->|"CIDR resource configuration<br/>10.1.2.0/24, 10.1.3.0/24"| G
-```
+![Network Segment Access with Tunnel Endpoints](../../../images/pattern3_architecture2.png)
 
 ## How this differs from other VPC resources
 
