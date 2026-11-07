@@ -33,14 +33,15 @@ resource "aws_vpclattice_resource_gateway" "resource_gateway" {
 }
 
 # Resource configuration (CIDR type): the network segment
-resource "awscc_vpclattice_resource_configuration" "network_segment" {
+resource "aws_vpclattice_resource_configuration" "network_segment" {
   name                        = "resource-config-${var.identifier}"
-  resource_configuration_type = "CIDR"
-  resource_gateway_id         = aws_vpclattice_resource_gateway.resource_gateway.id
+  type                        = "CIDR"
+  resource_gateway_identifier = aws_vpclattice_resource_gateway.resource_gateway.id
+  protocol                    = "TCP"
   port_ranges                 = [tostring(var.segment_port)]
 
-  resource_configuration_definition = {
-    cidr_resource = {
+  resource_configuration_definition {
+    cidr_resource {
       cidr_ranges = var.provider_vpc.workload_subnet_cidrs
     }
   }
@@ -54,7 +55,7 @@ resource "aws_cloudwatch_log_group" "vpclattice_access_logs" {
 
 # Access log subscription (resource configuration scope)
 resource "aws_vpclattice_access_log_subscription" "resource_configuration_access_logs" {
-  resource_identifier = awscc_vpclattice_resource_configuration.network_segment.arn
+  resource_identifier = aws_vpclattice_resource_configuration.network_segment.arn
   destination_arn     = aws_cloudwatch_log_group.vpclattice_access_logs.arn
 }
 
@@ -156,18 +157,17 @@ locals {
 }
 
 # Tunnel VPC endpoint. Its subnets must be in the resource gateway's Availability Zones.
-resource "awscc_ec2_vpc_endpoint" "tunnel" {
+resource "aws_vpc_endpoint" "tunnel" {
   vpc_id                     = module.consumer_vpc.vpc_attributes.id
   vpc_endpoint_type          = "Tunnel"
-  resource_configuration_arn = awscc_vpclattice_resource_configuration.network_segment.arn
+  resource_configuration_arn = aws_vpclattice_resource_configuration.network_segment.arn
   ip_address_type            = "ipv4"
   subnet_ids                 = [for v in values(local.consumer_endpoint_subnets) : v.id]
   security_group_ids         = [aws_security_group.tunnel_endpoint_sg.id]
 
-  tags = [{
-    key   = "Name"
-    value = "consumer-vpc-tunnel-endpoint-${var.identifier}"
-  }]
+  tags = {
+    Name = "consumer-vpc-tunnel-endpoint-${var.identifier}"
+  }
 }
 
 # Security Group: tunnel endpoint (GENEVE from the consumer instances)
@@ -230,7 +230,7 @@ resource "aws_vpc_security_group_egress_rule" "consumer_egress_any_ipv6" {
 # Tunnel endpoint network interfaces (one per AZ). Their IPs are the GENEVE targets.
 data "aws_network_interface" "tunnel_endpoint" {
   count = var.consumer_vpc.number_azs
-  id    = awscc_ec2_vpc_endpoint.tunnel.network_interface_ids[count.index]
+  id    = tolist(aws_vpc_endpoint.tunnel.network_interface_ids)[count.index]
 }
 
 # EC2 instances: one per workload subnet.
